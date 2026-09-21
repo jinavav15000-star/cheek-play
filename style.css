@@ -60,9 +60,6 @@ body {
 .editing .region { display: block; pointer-events: auto; cursor: grab; }
 .ghost .region { display: block; border-width: 1px; background: transparent; opacity: .55; }
 .ghost .region .tag, .ghost .region .handle { display: none; }
-.flash .region { display: block; animation: flash .7s ease-out; }
-.flash .region .tag, .flash .region .handle { display: none; }
-@keyframes flash { from { opacity: 1; } to { opacity: 0; } }
 
 .edit-bar {
   position: absolute; left: 12px; right: 12px; top: 10px;

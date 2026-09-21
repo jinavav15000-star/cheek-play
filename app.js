@@ -69,7 +69,7 @@
   const GRID_LONG = 96; // 긴 변 기준 격자 칸 수
   let A = 1;            // 이미지 세로/가로 비율
   let cols, rows, n, stride, indexCount;
-  let restX, restY, dx, dy, vx, vy, w, free, pos;
+  let restX, restY, dx, dy, vx, vy, tgtX, tgtY, held, free, pos;
   let srcCanvas = null; // 텍스처 원본(컨텍스트 복구용)
 
   function buildMesh() {
@@ -80,7 +80,8 @@
     restX = new Float32Array(n); restY = new Float32Array(n);
     dx = new Float32Array(n); dy = new Float32Array(n);
     vx = new Float32Array(n); vy = new Float32Array(n);
-    w = new Float32Array(n); free = new Uint8Array(n);
+    tgtX = new Float32Array(n); tgtY = new Float32Array(n); held = new Float32Array(n);
+    free = new Uint8Array(n);
     pos = new Float32Array(n * 2);
     const uv = new Float32Array(n * 2);
     for (let j = 0; j <= rows; j++) for (let i = 0; i <= cols; i++) {
@@ -142,10 +143,13 @@
     }
   }
 
-  // ---------- 잡기 ----------
-  const grab = { active: false, pointerId: null, sx: 0, sy: 0, Dx: 0, Dy: 0, limit: 0.1 };
+  // ---------- 잡기 (손가락마다 독립) ----------
+  // pointerId -> { sx, sy, Dx, Dy, limit, w }. w는 그 손가락이 각 정점을 끌고 가는 비율(0~1).
+  const grabs = new Map();
+  const MAX_GRABS = 4;
 
-  function beginGrab(x, y) {
+  function beginGrab(id, x, y) {
+    if (grabs.size >= MAX_GRABS || grabs.has(id)) return false;
     let reg = null, Rg;
     if (settings.mask) {
       let best = Infinity;
@@ -159,33 +163,58 @@
       const avg = regions.reduce((s, r) => s + r.r, 0) / (regions.length || 1) || 0.12;
       Rg = avg * GRAB_BASE * settings.grab;
     }
+    const w = new Float32Array(n);
     for (let k = 0; k < n; k++) {
-      if (!free[k]) { w[k] = 0; continue; }
+      if (!free[k]) continue;
       const q = Math.hypot(restX[k] - x, restY[k] - y) / Rg;
       let g = q < 1 ? (1 - q * q) * (1 - q * q) : 0;
       if (reg) g *= regionMask(reg, restX[k], restY[k]);
       w[k] = g;
     }
-    grab.active = true; grab.sx = x; grab.sy = y; grab.Dx = grab.Dy = 0;
-    grab.limit = Rg * settings.stretch;
+    grabs.set(id, { sx: x, sy: y, Dx: 0, Dy: 0, limit: Rg * settings.stretch, w });
+    updateTargets();
     wake();
     return true;
   }
 
-  function moveGrab(x, y) {
+  function moveGrab(id, x, y) {
+    const g = grabs.get(id);
+    if (!g) return;
     // 당긴 거리에 부드러운 한계를 둔다(tanh). 한계를 넘기면 메시가 접혀 사진이 찢어져 보인다.
-    const mx = x - grab.sx, my = y - grab.sy;
+    const mx = x - g.sx, my = y - g.sy;
     const len = Math.hypot(mx, my);
-    if (len < 1e-6) { grab.Dx = grab.Dy = 0; return; }
-    const L = grab.limit;
-    const s = (L * Math.tanh(len / L)) / len;
-    grab.Dx = mx * s; grab.Dy = my * s;
+    if (len < 1e-6) { g.Dx = g.Dy = 0; }
+    else {
+      const s = (g.limit * Math.tanh(len / g.limit)) / len;
+      g.Dx = mx * s; g.Dy = my * s;
+    }
+    updateTargets();
     wake();
   }
 
-  function endGrab() {
-    grab.active = false; grab.pointerId = null;
+  function endGrab(id) {
+    if (!grabs.delete(id)) return false;
+    updateTargets();
     wake();
+    return true;
+  }
+
+  function clearGrabs() {
+    grabs.clear();
+    updateTargets();
+  }
+
+  // 모든 손가락의 당김을 합쳐 정점별 목표 변위(tgtX, tgtY)와 "잡혀 있는 정도"(held)를 만든다.
+  function updateTargets() {
+    tgtX.fill(0); tgtY.fill(0); held.fill(0);
+    for (const g of grabs.values()) {
+      const w = g.w;
+      for (let k = 0; k < n; k++) {
+        const wk = w[k];
+        if (wk === 0) continue;
+        tgtX[k] += wk * g.Dx; tgtY[k] += wk * g.Dy; held[k] += wk;
+      }
+    }
   }
 
   // ---------- 물리 ----------
@@ -196,16 +225,16 @@
     const om = 2 * Math.PI * settings.freq;
     const kRel = om * om;
     const kc = kRel * 1.5; // 이웃 정점끼리의 결합. 가운데와 가장자리가 어긋나게 흔들려 젤리처럼 보인다.
-    const holding = grab.active;
-    const k = holding ? K_HOLD : kRel;
-    const zeta = holding ? ZETA_HOLD : 0.6 - 0.52 * settings.wobble;
-    const c = 2 * zeta * Math.sqrt(k);
-    const Dx = grab.Dx, Dy = grab.Dy;
+    const zetaRel = 0.6 - 0.52 * settings.wobble;
+    const cRel = 2 * zetaRel * om, cHold = 2 * ZETA_HOLD * Math.sqrt(K_HOLD);
     let energy = 0;
     for (let j = 1; j < rows; j++) {
       for (let i = 1, k0 = j * stride + 1; i < cols; i++, k0++) {
         if (!free[k0]) continue;
-        const tx = holding ? w[k0] * Dx : 0, ty = holding ? w[k0] * Dy : 0;
+        // 잡힌 정점만 단단한 스프링으로 손가락을 따라가고, 나머지는 놓임 상태로 출렁인다
+        const isHeld = held[k0] > 0.002;
+        const k = isHeld ? K_HOLD : kRel, c = isHeld ? cHold : cRel;
+        const tx = tgtX[k0], ty = tgtY[k0];
         const lx = dx[k0 - 1] + dx[k0 + 1] + dx[k0 - stride] + dx[k0 + stride] - 4 * dx[k0];
         const ly = dy[k0 - 1] + dy[k0 + 1] + dy[k0 - stride] + dy[k0 + stride] - 4 * dy[k0];
         vx[k0] += (-k * (dx[k0] - tx) - c * vx[k0] + kc * lx) * DT;
@@ -238,7 +267,7 @@
     acc += Math.min(0.05, (t - lastT) / 1000); lastT = t;
     let energy = 1;
     while (acc >= DT) { energy = step(); acc -= DT; }
-    if (!grab.active && energy < 2e-5) { settle(); running = false; }
+    if (grabs.size === 0 && energy < 2e-5) { settle(); running = false; }
     render();
     if (running) requestAnimationFrame(frame);
   }
@@ -298,7 +327,7 @@
     srcCanvas = c;
     A = c.height / c.width;
     regions = newRegions || defaultRegions();
-    grab.active = false;
+    grabs.clear();
     uploadTexture();
     buildMesh();
     buildRegionEls();
@@ -374,30 +403,24 @@
     };
   }
 
-  // ---------- 잡아당기기 입력 (한 손가락) ----------
+  // ---------- 잡아당기기 입력 (여러 손가락 동시) ----------
   canvas.addEventListener('pointerdown', (e) => {
-    if (editing || grab.active) return;
+    if (editing) return;
     const p = toImg(e.clientX, e.clientY);
-    if (!beginGrab(p.x, p.y)) {
-      toast('표시된 볼 영역 안을 잡아보세요');
-      regionsEl.classList.remove('flash'); void regionsEl.offsetWidth; regionsEl.classList.add('flash');
+    if (!beginGrab(e.pointerId, p.x, p.y)) {
+      if (grabs.size === 0) toast('볼 부분을 잡아보세요 (위치는 "볼 위치"에서 조정)');
       return;
     }
-    grab.pointerId = e.pointerId;
     try { canvas.setPointerCapture(e.pointerId); } catch { /* 합성 이벤트 */ }
     buzz(12);
     e.preventDefault();
   });
   canvas.addEventListener('pointermove', (e) => {
-    if (!grab.active || e.pointerId !== grab.pointerId) return;
+    if (!grabs.has(e.pointerId)) return;
     const p = toImg(e.clientX, e.clientY);
-    moveGrab(p.x, p.y);
+    moveGrab(e.pointerId, p.x, p.y);
   });
-  const release = (e) => {
-    if (!grab.active || e.pointerId !== grab.pointerId) return;
-    endGrab();
-    buzz(8);
-  };
+  const release = (e) => { if (endGrab(e.pointerId)) buzz(8); };
   canvas.addEventListener('pointerup', release);
   canvas.addEventListener('pointercancel', release);
   canvas.addEventListener('contextmenu', (e) => e.preventDefault());
@@ -457,10 +480,9 @@
 
   function setEditing(on) {
     editing = on;
-    if (on) { endGrab(); settle(); render(); }
+    if (on) { clearGrabs(); settle(); render(); }
     else { updateFree(); }
     $('#editBar').hidden = !on;
-    regionsEl.classList.remove('flash');
     regionsEl.classList.toggle('editing', on);
     regionsEl.classList.toggle('ghost', !on && settings.show);
     hintEl.textContent = on ? '볼 위치를 맞추는 중' : '볼을 누른 채로 당겼다가 놓아보세요';
@@ -538,7 +560,7 @@
 
   // 디버그/자동 검증용
   window.__cheek = {
-    settings, grab, beginGrab, moveGrab, endGrab, step, render, toImg,
+    settings, grabs, beginGrab, moveGrab, endGrab, step, render, toImg,
     get state() { return { n, cols, rows, A, dx, dy, vx, vy, free, regions, imgRect, running }; },
   };
 })();
