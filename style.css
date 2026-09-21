@@ -1,0 +1,114 @@
+:root {
+  --bg: #17120f;
+  --surface: #261d19;
+  --line: #3b2e28;
+  --text: #f6ebe4;
+  --muted: #b39d91;
+  --accent: #ff9e88;
+  --accent-ink: #3a140b;
+}
+
+* { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+
+html, body {
+  height: 100%;
+  margin: 0;
+  overflow: hidden;
+  overscroll-behavior: none; /* 당겨서 새로고침 방지 */
+  background: var(--bg);
+  color: var(--text);
+  font-family: system-ui, "Apple SD Gothic Neo", "Noto Sans KR", sans-serif;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+body {
+  display: flex;
+  flex-direction: column;
+  height: 100dvh;
+  padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+}
+
+.top { padding: 10px 16px 8px; display: flex; align-items: baseline; gap: 12px; }
+.top h1 { margin: 0; font-size: 17px; font-weight: 800; letter-spacing: -0.02em; color: var(--accent); white-space: nowrap; }
+.hint { margin: 0; font-size: 13px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.stage { position: relative; flex: 1; min-height: 0; }
+#gl { position: absolute; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; }
+
+.regions { position: absolute; inset: 0; pointer-events: none; }
+.region {
+  position: absolute;
+  border-radius: 50%;
+  border: 2px dashed var(--accent);
+  background: rgba(255, 158, 136, 0.14);
+  display: none;
+  touch-action: none;
+}
+.region .tag {
+  position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
+  font-size: 12px; font-weight: 700; color: #fff; text-shadow: 0 1px 3px rgba(0,0,0,.7);
+  pointer-events: none; white-space: nowrap;
+}
+.region .handle {
+  position: absolute; left: 85.4%; top: 85.4%;
+  width: 30px; height: 30px; margin: -15px 0 0 -15px;
+  border-radius: 50%; background: var(--accent); border: 3px solid #fff;
+  box-shadow: 0 2px 6px rgba(0,0,0,.5);
+  touch-action: none;
+}
+.editing .region { display: block; pointer-events: auto; cursor: grab; }
+.ghost .region { display: block; border-width: 1px; background: transparent; opacity: .55; }
+.ghost .region .tag, .ghost .region .handle { display: none; }
+.flash .region { display: block; animation: flash .7s ease-out; }
+.flash .region .tag, .flash .region .handle { display: none; }
+@keyframes flash { from { opacity: 1; } to { opacity: 0; } }
+
+.edit-bar {
+  position: absolute; left: 12px; right: 12px; top: 10px;
+  display: flex; align-items: center; gap: 10px;
+  padding: 10px 10px 10px 14px; border-radius: 14px;
+  background: rgba(38, 29, 25, .92); border: 1px solid var(--line);
+  font-size: 13px; line-height: 1.35;
+}
+.edit-bar span { flex: 1; }
+.edit-bar .btn { flex: none; min-height: 40px; padding: 0 18px; }
+
+.toast {
+  position: absolute; left: 50%; bottom: 14px; transform: translateX(-50%);
+  padding: 8px 14px; border-radius: 999px; font-size: 13px;
+  background: rgba(0,0,0,.72); color: #fff; pointer-events: none; white-space: nowrap;
+}
+
+.bottom { display: flex; gap: 8px; padding: 10px 12px 12px; }
+.btn {
+  flex: 1; min-height: 48px; padding: 0 12px;
+  border-radius: 14px; border: 1px solid var(--line);
+  background: var(--surface); color: var(--text);
+  font: inherit; font-size: 15px; font-weight: 700;
+}
+.btn:active { transform: scale(.97); }
+.btn.primary { background: var(--accent); color: var(--accent-ink); border-color: transparent; }
+.btn.small { flex: none; min-height: 40px; font-size: 14px; }
+.bottom .btn:first-child { background: var(--accent); color: var(--accent-ink); border-color: transparent; }
+
+.sheet {
+  /* 겹치는 오버레이가 아니라 레이아웃의 일부: 열리면 사진이 위로 줄어들어 조절하면서 바로 만져볼 수 있다 */
+  flex: none; order: 3;
+  padding: 14px 16px 16px;
+  background: var(--surface); border-top: 1px solid var(--line);
+  border-radius: 20px 20px 0 0;
+  display: flex; flex-direction: column; gap: 12px;
+  max-height: 44dvh; overflow-y: auto;
+}
+.sheet > * { flex: none; }
+.sheet[hidden], .edit-bar[hidden], .toast[hidden] { display: none; }
+.sheet-head { display: flex; justify-content: space-between; align-items: center; font-size: 16px; }
+.sheet label { display: flex; flex-direction: column; gap: 6px; font-size: 14px; color: var(--muted); }
+.sheet label output { color: var(--text); font-variant-numeric: tabular-nums; margin-left: 6px; }
+.sheet label:not(.check) { display: grid; grid-template-columns: 1fr auto; }
+.sheet label:not(.check) input { grid-column: 1 / -1; }
+.sheet label.check { flex-direction: row; align-items: center; gap: 10px; color: var(--text); min-height: 32px; }
+.sheet input[type=range] { width: 100%; accent-color: var(--accent); height: 28px; }
+.sheet input[type=checkbox] { width: 20px; height: 20px; accent-color: var(--accent); }
+.note { margin: 0; font-size: 12px; color: var(--muted); }

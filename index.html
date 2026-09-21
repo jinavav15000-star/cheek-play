@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<meta name="theme-color" content="#17120f">
+<title>볼 꼬집기</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="top">
+  <h1>볼 꼬집기</h1>
+  <p id="hint" class="hint">볼을 누른 채로 당겼다가 놓아보세요</p>
+</header>
+
+<main id="stage" class="stage">
+  <canvas id="gl"></canvas>
+  <div id="regions" class="regions"></div>
+  <div id="editBar" class="edit-bar" hidden>
+    <span>원을 볼 위로 옮기고, 모서리 점을 끌어 크기를 맞추세요</span>
+    <button id="editDone" class="btn primary">완료</button>
+  </div>
+  <div id="toast" class="toast" hidden></div>
+</main>
+
+<nav class="bottom">
+  <button id="btnPhoto" class="btn">사진 불러오기</button>
+  <button id="btnEdit" class="btn">볼 위치</button>
+  <button id="btnFeel" class="btn">느낌 조절</button>
+  <input id="file" type="file" accept="image/*" hidden>
+</nav>
+
+<section id="sheet" class="sheet" hidden>
+  <div class="sheet-head">
+    <strong>느낌 조절</strong>
+    <button id="sheetClose" class="btn small">닫기</button>
+  </div>
+  <label>출렁이는 속도 <output id="oFreq"></output>
+    <input id="sFreq" type="range" min="2" max="8" step="0.1">
+  </label>
+  <label>출렁임 정도 <output id="oWobble"></output>
+    <input id="sWobble" type="range" min="0" max="1" step="0.01">
+  </label>
+  <label>늘어나는 한계 <output id="oStretch"></output>
+    <input id="sStretch" type="range" min="0.3" max="1" step="0.01">
+  </label>
+  <label>잡히는 범위 <output id="oGrab"></output>
+    <input id="sGrab" type="range" min="0.6" max="1.4" step="0.01">
+  </label>
+  <label class="check"><input id="cMask" type="checkbox"> 볼 영역만 움직이기 (얼굴·배경 고정)</label>
+  <label class="check"><input id="cShow" type="checkbox"> 볼 영역 항상 표시</label>
+  <label class="check"><input id="cHaptic" type="checkbox"> 진동 피드백</label>
+  <button id="btnReset" class="btn small">기본값으로</button>
+  <p class="note">사진은 이 기기 안에서만 처리되고 어디에도 업로드되지 않습니다.</p>
+</section>
+
+<script src="app.js"></script>
+</body>
+</html>
