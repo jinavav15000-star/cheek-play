@@ -109,3 +109,6 @@ body {
 .sheet input[type=range] { width: 100%; accent-color: var(--accent); height: 28px; }
 .sheet input[type=checkbox] { width: 20px; height: 20px; accent-color: var(--accent); }
 .note { margin: 0; font-size: 12px; color: var(--muted); }
+
+/* display:none 이면 햅틱이 안 울리므로 화면 밖으로만 치운다 */
+.ios-haptic { position: fixed; left: -9999px; top: 0; width: 1px; height: 1px; overflow: hidden; opacity: 0; pointer-events: none; }

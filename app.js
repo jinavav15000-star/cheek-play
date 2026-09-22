@@ -425,8 +425,12 @@
   canvas.addEventListener('pointercancel', release);
   canvas.addEventListener('contextmenu', (e) => e.preventDefault());
 
+  // 안드로이드: navigator.vibrate. iOS 사파리는 vibrate가 없으므로 switch 체크박스 토글로 시스템 햅틱을 빌린다(iOS 18+, 강도 조절 불가).
+  const iosHaptic = $('#iosHaptic');
   function buzz(ms) {
-    if (settings.haptic && navigator.vibrate) { try { navigator.vibrate(ms); } catch { /* 무시 */ } }
+    if (!settings.haptic) return;
+    if (navigator.vibrate) { try { navigator.vibrate(ms); } catch { /* 무시 */ } return; }
+    if (iosHaptic) { try { iosHaptic.click(); } catch { /* 무시 */ } }
   }
 
   // ---------- 볼 영역 편집 ----------

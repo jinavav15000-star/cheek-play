@@ -18,6 +18,7 @@
 - 당김 한계는 `잡는 반지름 × stretch`. 약 0.65를 넘으면 메시가 접힌다.
 - 움직임이 멎으면 rAF 루프를 끈다(`wake()`로 재시작). 상시 루프로 바꾸지 말 것.
 - `window.__cheek`는 디버그·자동 검증용 훅.
+- 진동: 안드로이드는 `navigator.vibrate`, iOS 사파리는 `#iosHaptic`(`<input type=checkbox switch>`)를 `click()`해 시스템 햅틱을 빌린다(iOS 18+ 한정, 강도 조절 불가, `display:none`이면 안 울림). 확실한 해결은 Capacitor 네이티브 햅틱.
 
 ## 실행
 - `./serve.sh` → 출력되는 주소를 같은 와이파이의 폰에서 연다.
