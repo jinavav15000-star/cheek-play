@@ -35,6 +35,9 @@
     return;
   }
 
+  // 화면에는 사진 전체를 덮는 사각형 하나만 그린다. 변형은 프래그먼트 셰이더가 픽셀마다 계산한다:
+  // 출력 픽셀 p → 격자 변위장 d(p)를 3차(Catmull-Rom) 보간으로 읽고 → 원본의 p - d(p) 색을 가져온다(역방향 워프).
+  // 삼각형 메시로 그리면 실루엣이 다각형처럼 보이고 세게 당기면 접히는데, 이 방식은 격자와 무관하게 매끈하고 접히지 않는다.
   const VS = `
     attribute vec2 aPos; attribute vec2 aUV;
     uniform vec2 uO; uniform vec2 uS;
@@ -43,18 +46,53 @@
       vUV = aUV;
       gl_Position = vec4(uO.x + aPos.x * uS.x, uO.y - aPos.y * uS.y, 0.0, 1.0);
     }`;
-  // 2패스: 1) 변형된 메시에 사진을 그린다 2) 보호할 얼굴(앞사람)만 원본 위치에 다시 덮어 그린다.
-  // 2패스의 알파는 마스크 텍스처(얼굴 윤곽을 픽셀 단위로 칠한 것)에서 온다 → 격자와 무관하게 정확한 누끼.
   const FS = `
-    precision mediump float;
-    varying vec2 vUV; uniform sampler2D uTex; uniform sampler2D uMask; uniform float uUseMask;
+    precision highp float;
+    varying vec2 vUV;
+    uniform sampler2D uTex;   // 사진
+    uniform sampler2D uDisp;  // 격자 변위장 (RGBA8에 16비트씩 인코딩: xy)
+    uniform sampler2D uMask;  // 보호할 얼굴(앞사람) 마스크
+    uniform vec2 uGrid;       // 격자 점 개수 (cols+1, rows+1)
+    uniform float uA;         // 세로/가로
+    uniform float uUseMask;
+    const float R = 1.0;      // 변위 인코딩 범위 [-R, R]
+
+    vec2 fetchDisp(vec2 ij) {
+      vec4 t = texture2D(uDisp, (ij + 0.5) / uGrid);
+      vec2 v = vec2(t.r * 255.0 * 256.0 + t.g * 255.0, t.b * 255.0 * 256.0 + t.a * 255.0) / 65535.0;
+      return v * 2.0 * R - R;
+    }
+    // Catmull-Rom 가중치
+    vec4 cubicW(float f) {
+      float f2 = f * f, f3 = f2 * f;
+      return vec4(-0.5*f3 + f2 - 0.5*f, 1.5*f3 - 2.5*f2 + 1.0, -1.5*f3 + 2.0*f2 + 0.5*f, 0.5*f3 - 0.5*f2);
+    }
+    vec2 dispAt(vec2 uv) {
+      vec2 g = uv * (uGrid - 1.0);          // 격자 좌표
+      vec2 i0 = floor(g);
+      vec2 f = g - i0;
+      vec4 wx = cubicW(f.x), wy = cubicW(f.y);
+      vec2 acc = vec2(0.0);
+      for (int j = -1; j <= 2; j++) {
+        float wyj = j == -1 ? wy.x : (j == 0 ? wy.y : (j == 1 ? wy.z : wy.w));
+        vec2 row = vec2(0.0);
+        for (int i = -1; i <= 2; i++) {
+          float wxi = i == -1 ? wx.x : (i == 0 ? wx.y : (i == 1 ? wx.z : wx.w));
+          vec2 ij = clamp(i0 + vec2(float(i), float(j)), vec2(0.0), uGrid - 1.0);
+          row += wxi * fetchDisp(ij);
+        }
+        acc += wyj * row;
+      }
+      return acc;
+    }
     void main() {
-      vec4 c = texture2D(uTex, vUV);
-      float a = uUseMask > 0.5 ? texture2D(uMask, vUV).a : 1.0;
-      gl_FragColor = vec4(c.rgb, a);
+      vec2 d = dispAt(vUV);
+      if (uUseMask > 0.5) d *= 1.0 - texture2D(uMask, vUV).a;
+      vec2 src = vUV - vec2(d.x, d.y / uA);
+      gl_FragColor = texture2D(uTex, clamp(src, 0.0, 1.0));
     }`;
 
-  let prog, locPos, locUV, locO, locS, locUseMask, posBuf, restBuf, uvBuf, idxBuf, tex, maskTex, uintIndex;
+  let prog, locPos, locUV, locO, locS, locUseMask, locGrid, locA, posBuf, uvBuf, tex, maskTex, dispTex;
 
   function initGL() {
     const sh = (type, src) => {
@@ -73,26 +111,31 @@
     locO = gl.getUniformLocation(prog, 'uO');
     locS = gl.getUniformLocation(prog, 'uS');
     locUseMask = gl.getUniformLocation(prog, 'uUseMask');
+    locGrid = gl.getUniformLocation(prog, 'uGrid');
+    locA = gl.getUniformLocation(prog, 'uA');
     gl.uniform1i(gl.getUniformLocation(prog, 'uTex'), 0);
     gl.uniform1i(gl.getUniformLocation(prog, 'uMask'), 1);
-    posBuf = gl.createBuffer(); restBuf = gl.createBuffer(); uvBuf = gl.createBuffer(); idxBuf = gl.createBuffer();
-    tex = gl.createTexture(); maskTex = gl.createTexture();
-    uintIndex = !!gl.getExtension('OES_element_index_uint'); // 격자가 촘촘하면 인덱스가 65535를 넘는다
-    gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+    gl.uniform1i(gl.getUniformLocation(prog, 'uDisp'), 2);
+    posBuf = gl.createBuffer(); uvBuf = gl.createBuffer();
+    tex = gl.createTexture(); maskTex = gl.createTexture(); dispTex = gl.createTexture();
+    // 사진을 덮는 사각형 하나 (위치는 buildMesh에서 A에 맞춰 채움)
+    gl.bindBuffer(gl.ARRAY_BUFFER, uvBuf);
+    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([0, 0, 1, 0, 0, 1, 1, 1]), gl.STATIC_DRAW);
+    gl.enableVertexAttribArray(locPos);
+    gl.enableVertexAttribArray(locUV);
     gl.clearColor(0x17 / 255, 0x12 / 255, 0x0f / 255, 1);
   }
 
   // ---------- 메시 + 물리 상태 ----------
-  const GRID_FINE = 224, GRID_COARSE = 96; // 긴 변 기준 격자 칸 수. 촘촘할수록 늘어난 실루엣의 다각형 티가 안 난다.
+  const GRID_LONG = 128; // 긴 변 기준 물리 격자 칸 수. 화면은 픽셀 단위로 보간하므로 이 값이 실루엣 품질을 정하지 않는다.
   let A = 1;            // 이미지 세로/가로 비율
-  let cols, rows, n, stride, indexCount;
-  let restX, restY, dx, dy, vx, vy, tgtX, tgtY, held, free, owner, pos;
+  let cols, rows, n, stride;
+  let restX, restY, dx, dy, vx, vy, tgtX, tgtY, held, free, owner, dispBytes;
   let srcCanvas = null; // 텍스처 원본(컨텍스트 복구용)
 
   function buildMesh() {
-    const G = uintIndex ? GRID_FINE : GRID_COARSE;
-    if (A >= 1) { rows = G; cols = Math.max(8, Math.round(G / A)); }
-    else { cols = G; rows = Math.max(8, Math.round(G * A)); }
+    if (A >= 1) { rows = GRID_LONG; cols = Math.max(8, Math.round(GRID_LONG / A)); }
+    else { cols = GRID_LONG; rows = Math.max(8, Math.round(GRID_LONG * A)); }
     stride = cols + 1;
     n = stride * (rows + 1);
     restX = new Float32Array(n); restY = new Float32Array(n);
@@ -100,37 +143,23 @@
     vx = new Float32Array(n); vy = new Float32Array(n);
     tgtX = new Float32Array(n); tgtY = new Float32Array(n); held = new Float32Array(n);
     free = new Uint8Array(n); owner = new Int16Array(n);
-    pos = new Float32Array(n * 2);
-    const uv = new Float32Array(n * 2);
+    dispBytes = new Uint8Array(n * 4);
     for (let j = 0; j <= rows; j++) for (let i = 0; i <= cols; i++) {
       const k = j * stride + i;
       restX[k] = i / cols; restY[k] = (j / rows) * A;
-      uv[k * 2] = i / cols; uv[k * 2 + 1] = j / rows;
     }
-    const idx = new (uintIndex ? Uint32Array : Uint16Array)(cols * rows * 6);
-    let p = 0;
-    // 대각선 방향을 체크무늬로 번갈아 둔다. 한 방향으로만 자르면 늘어난 경계에 한쪽으로 쏠린 지그재그가 생긴다.
-    for (let j = 0; j < rows; j++) for (let i = 0; i < cols; i++) {
-      const a = j * stride + i, b = a + 1, c = a + stride, d = c + 1;
-      if ((i + j) & 1) {
-        idx[p++] = a; idx[p++] = c; idx[p++] = b;
-        idx[p++] = b; idx[p++] = c; idx[p++] = d;
-      } else {
-        idx[p++] = a; idx[p++] = c; idx[p++] = d;
-        idx[p++] = a; idx[p++] = d; idx[p++] = b;
-      }
-    }
-    indexCount = idx.length;
-    gl.bindBuffer(gl.ARRAY_BUFFER, uvBuf);
-    gl.bufferData(gl.ARRAY_BUFFER, uv, gl.STATIC_DRAW);
-    gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, idxBuf);
-    gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, idx, gl.STATIC_DRAW);
     gl.bindBuffer(gl.ARRAY_BUFFER, posBuf);
-    gl.bufferData(gl.ARRAY_BUFFER, pos.byteLength, gl.DYNAMIC_DRAW);
-    const rest = new Float32Array(n * 2);
-    for (let k = 0; k < n; k++) { rest[k * 2] = restX[k]; rest[k * 2 + 1] = restY[k]; }
-    gl.bindBuffer(gl.ARRAY_BUFFER, restBuf);
-    gl.bufferData(gl.ARRAY_BUFFER, rest, gl.STATIC_DRAW);
+    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([0, 0, 1, 0, 0, A, 1, A]), gl.STATIC_DRAW);
+    gl.uniform2f(locGrid, cols + 1, rows + 1);
+    gl.uniform1f(locA, A);
+    gl.activeTexture(gl.TEXTURE2);
+    gl.bindTexture(gl.TEXTURE_2D, dispTex);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, cols + 1, rows + 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST); // 보간은 셰이더가 직접 한다
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+    gl.activeTexture(gl.TEXTURE0);
     updateFree();
   }
 
@@ -368,35 +397,29 @@
 
   function render() {
     if (!n) return;
-    for (let k = 0; k < n; k++) { pos[k * 2] = restX[k] + dx[k]; pos[k * 2 + 1] = restY[k] + dy[k]; }
-    gl.clear(gl.COLOR_BUFFER_BIT);
-    gl.bindBuffer(gl.ARRAY_BUFFER, uvBuf);
-    gl.enableVertexAttribArray(locUV);
-    gl.vertexAttribPointer(locUV, 2, gl.FLOAT, false, 0, 0);
-    gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, idxBuf);
-    const type = uintIndex ? gl.UNSIGNED_INT : gl.UNSIGNED_SHORT;
-    // 1패스: 변형된 사진
-    gl.disable(gl.BLEND);
-    gl.uniform1f(locUseMask, 0);
-    gl.bindBuffer(gl.ARRAY_BUFFER, posBuf);
-    gl.bufferSubData(gl.ARRAY_BUFFER, 0, pos);
-    gl.enableVertexAttribArray(locPos);
-    gl.vertexAttribPointer(locPos, 2, gl.FLOAT, false, 0, 0);
-    gl.drawElements(gl.TRIANGLES, indexCount, type, 0);
-    // 2패스: 보호할 얼굴을 원본 자리에 픽셀 단위로 덮는다
-    if (maskActive) {
-      gl.enable(gl.BLEND);
-      gl.uniform1f(locUseMask, 1);
-      gl.bindBuffer(gl.ARRAY_BUFFER, restBuf);
-      gl.vertexAttribPointer(locPos, 2, gl.FLOAT, false, 0, 0);
-      gl.drawElements(gl.TRIANGLES, indexCount, type, 0);
-      gl.disable(gl.BLEND);
+    // 변위장을 16비트×2로 인코딩해 텍스처에 올린다. 범위 [-1, 1] 이미지 단위.
+    for (let k = 0, o = 0; k < n; k++, o += 4) {
+      const ex = Math.round(Math.min(1, Math.max(0, (dx[k] + 1) * 0.5)) * 65535);
+      const ey = Math.round(Math.min(1, Math.max(0, (dy[k] + 1) * 0.5)) * 65535);
+      dispBytes[o] = ex >> 8; dispBytes[o + 1] = ex & 255;
+      dispBytes[o + 2] = ey >> 8; dispBytes[o + 3] = ey & 255;
     }
+    gl.activeTexture(gl.TEXTURE2);
+    gl.bindTexture(gl.TEXTURE_2D, dispTex);
+    gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, cols + 1, rows + 1, gl.RGBA, gl.UNSIGNED_BYTE, dispBytes);
+    gl.activeTexture(gl.TEXTURE0);
+    gl.clear(gl.COLOR_BUFFER_BIT);
+    gl.uniform1f(locUseMask, maskActive ? 1 : 0);
+    gl.bindBuffer(gl.ARRAY_BUFFER, posBuf);
+    gl.vertexAttribPointer(locPos, 2, gl.FLOAT, false, 0, 0);
+    gl.bindBuffer(gl.ARRAY_BUFFER, uvBuf);
+    gl.vertexAttribPointer(locUV, 2, gl.FLOAT, false, 0, 0);
+    gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
   }
 
   // ---------- 픽셀 단위 얼굴 보호 마스크 ----------
   // 잡힌 볼의 얼굴보다 앞에 있는(더 큰) 얼굴들의 윤곽 폴리곤을 캔버스에 칠해 텍스처로 올린다.
-  // 이 마스크가 있는 동안 2패스가 그 얼굴 픽셀을 원본 그대로 덮어 그린다.
+  // 이 마스크가 있는 동안 셰이더가 그 얼굴 픽셀의 변위를 0으로 만들어 원본 그대로 보여준다.
   let maskActive = false, maskKey = '';
   const MASK_PX = 768;
   function updateProtectMask() {
@@ -1057,6 +1080,6 @@
   // 디버그/자동 검증용
   window.__cheek = {
     settings, grabs, detectFaces, beginGrab, moveGrab, endGrab, step, render, toImg,
-    get state() { return { n, cols, rows, A, dx, dy, vx, vy, free, owner, regions, faceOvals, imgRect, view, running, detecting, coachStep, editing, selected, maskActive, uintIndex }; },
+    get state() { return { n, cols, rows, A, dx, dy, vx, vy, free, owner, regions, faceOvals, imgRect, view, running, detecting, coachStep, editing, selected, maskActive }; },
   };
 })();
