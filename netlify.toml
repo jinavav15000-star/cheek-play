@@ -1,3 +1,4 @@
+# 현재 배포는 GitHub Pages라 이 파일은 무시된다. Netlify로 옮길 때만 쓴다.
 # 빌드 없는 정적 사이트. 저장소 루트를 그대로 게시한다.
 [build]
   publish = "."

@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="only light">
+<meta name="theme-color" content="#FFF4EE">
+<title>볼 꼬집기 · 개인정보와 오픈소스</title>
+<link rel="icon" href="favicon.svg" type="image/svg+xml">
+<style>
+  @font-face { font-family: 'Jua'; src: url('fonts/jua.woff2') format('woff2'); font-display: swap; }
+  :root { color-scheme: only light; --bg: #FFF4EE; --surface: #fff; --ink: #5A4650; --muted: #7A6570; --pink-ink: #6B2A3C; --line: #F6D9DE; --pink: #FFA7B8; }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font: 15px/1.7 system-ui, 'Apple SD Gothic Neo', 'Noto Sans KR', sans-serif; }
+  main { max-width: 640px; margin: 0 auto; padding: 24px 20px 48px; }
+  h1, h2 { font-family: 'Jua', system-ui, sans-serif; font-weight: 400; color: var(--pink-ink); }
+  h1 { font-size: 28px; margin: 0 0 4px; }
+  h2 { font-size: 20px; margin: 28px 0 8px; }
+  .sub { color: var(--muted); margin: 0 0 16px; font-size: 13px; }
+  section { background: var(--surface); border: 1.5px solid var(--line); border-radius: 20px; padding: 4px 18px 14px; margin-top: 14px; }
+  ul { padding-left: 20px; margin: 8px 0; }
+  li { margin: 4px 0; }
+  a { color: var(--pink-ink); }
+  code { background: #FFE4E8; padding: 1px 6px; border-radius: 6px; font-size: 13px; }
+  .back { display: inline-block; margin-top: 24px; padding: 10px 18px; border-radius: 999px; background: var(--pink); color: var(--pink-ink); text-decoration: none; font-family: 'Jua', sans-serif; box-shadow: 0 3px 0 #F58AA0; }
+</style>
+</head>
+<body>
+<main>
+  <h1>볼 꼬집기 · 개인정보와 오픈소스</h1>
+  <p class="sub">시행일 2026-09-24 · 테스트(베타) 버전</p>
+
+  <section>
+    <h2>사진은 폰 밖으로 나가지 않아요</h2>
+    <ul>
+      <li>불러온 사진과 얼굴 인식 결과(볼 위치)는 <b>내 기기 안에서만</b> 처리돼요. 서버로 보내지 않고, 앱을 만든 사람도 볼 수 없어요.</li>
+      <li>얼굴 인식(Google MediaPipe)은 기기 안에서 실행돼요. 이 라이브러리에 들어 있는 진단 정보 전송 기능은 페이지 보안 설정(CSP)으로 막아 두었어요.</li>
+      <li>이 페이지는 GitHub Pages에서 제공돼요. GitHub는 서비스 운영을 위해 접속 기록(IP 주소 등)을 남길 수 있어요. 앱 자체는 접속 통계를 수집하지 않아요.</li>
+      <li>"이 장면 저장·공유"는 <b>내가 버튼을 눌러 고른 앱으로만</b> 사진이 가요. 저장되는 사진에는 위치 정보(EXIF)가 없어요. 다른 사람의 사진을 공유할 때는 그 사람의 허락을 받아 주세요.</li>
+      <li>카메라로 찍은 사진은 폰 설정에 따라 갤러리에 남을 수 있어요.</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>기기에 남는 것</h2>
+    <ul>
+      <li>느낌 조절 값, 첫 사용 안내를 봤는지, 의견 부탁 카드를 봤는지, 공유 안내에 동의했는지 — 브라우저 저장소(localStorage)에만 저장돼요.</li>
+      <li>브라우저 데이터를 지우면 함께 지워져요. 사진은 저장하지 않아요.</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>의견 보내기</h2>
+    <ul>
+      <li>의견은 Google Forms로 받아요. 이메일을 수집하지 않고, 사진은 포함되지 않아요.</li>
+      <li>폼을 열 때 당긴 횟수·찾은 얼굴 수·브라우저 종류 같은 숫자만 미리 채워질 수 있어요.</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>연령</h2>
+    <p>이 앱은 어린이를 대상으로 만들지 않았어요. 아이 사진을 쓰는 건 보호자의 판단에 맡겨요.</p>
+  </section>
+
+  <section>
+    <h2>오픈소스와 자료</h2>
+    <ul>
+      <li><b>MediaPipe Tasks Vision</b> 1.0.1 (Google) — <a href="vendor/mediapipe/LICENSE" target="_blank" rel="noopener">Apache License 2.0</a>. 얼굴 랜드마크 모델 <code>face_landmarker.task</code> 포함.</li>
+      <li><b>Jua</b> 서체 (우아한형제들) — <a href="fonts/OFL.txt" target="_blank" rel="noopener">SIL Open Font License 1.1</a>. 한글 서브셋으로 포함.</li>
+      <li><b>샘플 아기 사진 3장</b> — AI로 생성한 가상의 인물이에요. 실존 인물이 아니에요. <a href="samples/README.md" target="_blank" rel="noopener">출처</a></li>
+      <li>앱 소스: <a href="https://github.com/jinavav15000-star/cheek-play" target="_blank" rel="noopener">github.com/jinavav15000-star/cheek-play</a></li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>문의</h2>
+    <p>앱 안의 "의견 보내기"로 알려주세요. 이 문서는 정식 출시 전에 다시 정리할 예정이에요.</p>
+  </section>
+
+  <a class="back" href="./">← 볼 꼬집기로 돌아가기</a>
+</main>
+</body>
+</html>

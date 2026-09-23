@@ -1107,12 +1107,20 @@
     showSheet(id);
     if (!had) { try { history.pushState({ sheet: 1 }, ''); } catch { /* 무시 */ } }
   }
+  // closeSheet가 부른 history.back()의 popstate는 늦게 도착한다. 그 사이 다른 시트를 열었으면 그 popstate가 새 시트를
+  // 닫아버리므로(실제로 겪음), 우리가 만든 back은 세어 두었다가 건너뛴다.
+  let pendingBack = 0;
   function closeSheet() {
     if (!openId) return;
     showSheet(null);
-    if (history.state && history.state.sheet) { try { history.back(); } catch { /* 무시 */ } }
+    if (history.state && history.state.sheet) {
+      pendingBack++;
+      setTimeout(() => { pendingBack = Math.max(0, pendingBack - 1); }, 600);
+      try { history.back(); } catch { pendingBack = 0; }
+    }
   }
   window.addEventListener('popstate', () => {
+    if (pendingBack > 0) { pendingBack--; return; }
     if (!openId) return;
     if (openId === 'editPanel') setEditing(false, true); else showSheet(null);
   });
