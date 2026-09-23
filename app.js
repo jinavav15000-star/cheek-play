@@ -363,7 +363,8 @@
       if (drawable.close) drawable.close();
     } catch (e) {
       console.error(e);
-      toast('이 사진 형식은 열 수 없어요 (JPG/PNG로 시도해 보세요)');
+      const kind = (file.type || file.name.split('.').pop() || '알 수 없음').replace('image/', '').toUpperCase();
+      toast(`이 사진(${kind}, ${Math.round(file.size / 1024)}KB)은 열 수 없어요. JPG로 다시 시도해 보세요`);
       return;
     }
     await autoPlaceCheeks();
@@ -642,10 +643,22 @@
     toastTimer = setTimeout(() => { toastEl.hidden = true; }, 1800);
   }
 
+  // 사진 가져오기: 갤러리(사진 앱)와 카메라를 명확한 선택지로 보여준다.
+  // 갤럭시는 갤러리·내 파일·카메라 중 고르는 창이, 아이폰은 사진 보관함·촬영·파일 선택 창이 뜬다.
   function pickPhoto() {
     getLandmarker().catch(() => { /* 사진 고르는 동안 모델을 미리 받는다. 실패는 인식 단계에서 처리 */ });
-    $('#file').click();
+    $('#sheet').hidden = true;
+    $('#pick').hidden = false;
   }
+  function openInput(id) {
+    $('#pick').hidden = true;
+    const inp = $(id);
+    inp.value = '';
+    try { inp.showPicker ? inp.showPicker() : inp.click(); } catch { inp.click(); }
+  }
+  $('#pickGallery').addEventListener('click', () => openInput('#file'));
+  $('#pickCamera').addEventListener('click', () => openInput('#fileCam'));
+  $('#pickClose').addEventListener('click', () => { $('#pick').hidden = true; });
   $('#btnPhoto').addEventListener('click', () => { finishOnboarding(); pickPhoto(); });
   $('#btnHelp').addEventListener('click', () => {
     if (editing) setEditing(false);
@@ -767,14 +780,16 @@
     endGrab(DEMO_ID);
     fingerEl.hidden = true;
   }
-  $('#file').addEventListener('change', (e) => {
-    const f = e.target.files && e.target.files[0];
-    if (f) { stopDemo(); loadFile(f); }
-    e.target.value = '';
-  });
+  for (const id of ['#file', '#fileCam']) {
+    $(id).addEventListener('change', (e) => {
+      const f = e.target.files && e.target.files[0];
+      if (f) { stopDemo(); loadFile(f); }
+      e.target.value = '';
+    });
+  }
   $('#btnEdit').addEventListener('click', () => setEditing(!editing));
   $('#editDone').addEventListener('click', () => setEditing(false));
-  $('#btnFeel').addEventListener('click', () => { $('#sheet').hidden = !$('#sheet').hidden; });
+  $('#btnFeel').addEventListener('click', () => { $('#pick').hidden = true; $('#sheet').hidden = !$('#sheet').hidden; });
   $('#sheetClose').addEventListener('click', () => { $('#sheet').hidden = true; });
 
   const sliders = [

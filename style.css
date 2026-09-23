@@ -107,7 +107,7 @@ body {
   max-height: 44dvh; overflow-y: auto;
 }
 .sheet > * { flex: none; }
-.sheet[hidden], .edit-bar[hidden], .toast[hidden], .coach[hidden], .busy[hidden], .finger[hidden] { display: none; }
+.pick[hidden], .sheet[hidden], .edit-bar[hidden], .toast[hidden], .coach[hidden], .busy[hidden], .finger[hidden] { display: none; }
 .sheet-head { display: flex; justify-content: space-between; align-items: center; font-size: 16px; }
 .sheet label { display: flex; flex-direction: column; gap: 6px; font-size: 14px; color: var(--muted); }
 .sheet label output { color: var(--text); font-variant-numeric: tabular-nums; margin-left: 6px; }
@@ -157,3 +157,6 @@ body {
 .coach-btns:empty { display: none; }
 .coach-btns .btn { min-height: 42px; font-size: 14px; }
 @keyframes rise { from { opacity: 0; transform: translateY(8px); } }
+
+.offscreen { position: fixed; left: -9999px; top: 0; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
+.btn.tall { min-height: 54px; font-size: 16px; }
