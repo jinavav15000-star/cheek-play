@@ -175,3 +175,12 @@ body {
 .size-box { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
 .size-btns { display: flex; gap: 8px; }
 .size-btns .btn { flex: 1; }
+
+/* 샘플 사진 썸네일 */
+.samples { display: flex; gap: 8px; }
+.samples button {
+  flex: 1; aspect-ratio: 3 / 4; padding: 0; overflow: hidden;
+  border-radius: 12px; border: 2px solid var(--line); background: var(--bg);
+}
+.samples button:active { border-color: var(--accent); }
+.samples img { width: 100%; height: 100%; object-fit: cover; display: block; }

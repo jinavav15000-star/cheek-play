@@ -75,7 +75,7 @@
   const GRID_LONG = 96; // 긴 변 기준 격자 칸 수
   let A = 1;            // 이미지 세로/가로 비율
   let cols, rows, n, stride, indexCount;
-  let restX, restY, dx, dy, vx, vy, tgtX, tgtY, held, free, pos;
+  let restX, restY, dx, dy, vx, vy, tgtX, tgtY, held, free, owner, pos;
   let srcCanvas = null; // 텍스처 원본(컨텍스트 복구용)
 
   function buildMesh() {
@@ -87,7 +87,7 @@
     dx = new Float32Array(n); dy = new Float32Array(n);
     vx = new Float32Array(n); vy = new Float32Array(n);
     tgtX = new Float32Array(n); tgtY = new Float32Array(n); held = new Float32Array(n);
-    free = new Uint8Array(n);
+    free = new Uint8Array(n); owner = new Int16Array(n);
     pos = new Float32Array(n * 2);
     const uv = new Float32Array(n * 2);
     for (let j = 0; j <= rows; j++) for (let i = 0; i <= cols; i++) {
@@ -136,16 +136,41 @@
     return 1 - smoothstep(reg.r * MASK_INNER, reg.r * MASK_OUTER, d);
   }
 
-  // 움직일 수 있는 정점 표시. 테두리는 항상 고정, 마스크 모드에서는 볼 영역 밖도 고정.
+  // 얼굴 윤곽(타원). 자동 인식 때만 채워진다. { id, cx, cy, rx, ry, W }
+  // 얼굴이 겹치면 더 큰(=앞에 있는) 얼굴의 안쪽은 뒷사람 볼을 당겨도 움직이지 않게 보호한다.
+  let faceOvals = [];
+  function protection(reg, x, y) {
+    let f = 1;
+    for (const o of faceOvals) {
+      if (o.id === reg.face || o.W <= (reg.W || 0) * 1.02) continue; // 같은 얼굴이거나 뒤에 있는 얼굴이면 무시
+      const e = Math.hypot((x - o.cx) / o.rx, (y - o.cy) / o.ry);
+      f *= smoothstep(0.9, 1.15, e); // 타원 안 0 → 경계 밖 1
+      if (f === 0) break;
+    }
+    return f;
+  }
+  function effMask(reg, x, y) {
+    const m = regionMask(reg, x, y);
+    return m > 0 && faceOvals.length ? m * protection(reg, x, y) : m;
+  }
+
+  // 정점마다 움직일 수 있는지(free)와 주인 볼(owner)을 정한다.
+  // 테두리는 항상 고정. 마스크 모드에서는 어느 볼 영역에도 안 들면 고정.
+  // 주인이 다른 이웃끼리는 물리 결합을 끊어서, 한 사람 볼을 당겨도 옆 사람 볼이 따라오지 않는다.
   function updateFree() {
     for (let j = 0; j <= rows; j++) for (let i = 0; i <= cols; i++) {
       const k = j * stride + i;
       let f = i > 0 && i < cols && j > 0 && j < rows;
+      let best = 0, bi = -1;
       if (f && settings.mask) {
-        f = false;
-        for (const reg of regions) if (regionMask(reg, restX[k], restY[k]) > 0) { f = true; break; }
+        for (let r = 0; r < regions.length; r++) {
+          const m = effMask(regions[r], restX[k], restY[k]);
+          if (m > best) { best = m; bi = r; }
+        }
+        f = bi >= 0;
       }
       free[k] = f ? 1 : 0;
+      owner[k] = bi;
       if (!f) { dx[k] = dy[k] = vx[k] = vy[k] = 0; }
     }
   }
@@ -157,12 +182,13 @@
 
   function beginGrab(id, x, y) {
     if (grabs.size >= MAX_GRABS || grabs.has(id)) return false;
-    let reg = null, Rg;
+    let reg = null, regIdx = -1, Rg;
     if (settings.mask) {
       let best = Infinity;
-      for (const r of regions) {
+      for (let i = 0; i < regions.length; i++) {
+        const r = regions[i];
         const d = Math.hypot(x - r.cx, y - r.cy);
-        if (d < Math.max(r.r * GRAB_HIT, MIN_HIT_PX / imgRect.w) && d < best) { best = d; reg = r; }
+        if (d < Math.max(r.r * GRAB_HIT, MIN_HIT_PX / imgRect.w) && d < best) { best = d; reg = r; regIdx = i; }
       }
       if (!reg) return false;
       Rg = reg.r * GRAB_BASE * settings.grab;
@@ -172,10 +198,10 @@
     }
     const w = new Float32Array(n);
     for (let k = 0; k < n; k++) {
-      if (!free[k]) continue;
+      if (!free[k] || (reg && owner[k] !== regIdx)) continue;
       const q = Math.hypot(restX[k] - x, restY[k] - y) / Rg;
       let g = q < 1 ? (1 - q * q) * (1 - q * q) : 0;
-      if (reg) g *= regionMask(reg, restX[k], restY[k]);
+      if (reg) g *= effMask(reg, restX[k], restY[k]);
       w[k] = g;
     }
     grabs.set(id, { sx: x, sy: y, Dx: 0, Dy: 0, limit: Rg * settings.stretch, w });
@@ -242,8 +268,10 @@
         const isHeld = held[k0] > 0.002;
         const k = isHeld ? K_HOLD : kRel, c = isHeld ? cHold : cRel;
         const tx = tgtX[k0], ty = tgtY[k0];
-        const lx = dx[k0 - 1] + dx[k0 + 1] + dx[k0 - stride] + dx[k0 + stride] - 4 * dx[k0];
-        const ly = dy[k0 - 1] + dy[k0 + 1] + dy[k0 - stride] + dy[k0 + stride] - 4 * dy[k0];
+        const o = owner[k0];
+        const a = k0 - 1, b = k0 + 1, u = k0 - stride, d = k0 + stride;
+        const lx = (owner[a] === o ? dx[a] : 0) + (owner[b] === o ? dx[b] : 0) + (owner[u] === o ? dx[u] : 0) + (owner[d] === o ? dx[d] : 0) - 4 * dx[k0];
+        const ly = (owner[a] === o ? dy[a] : 0) + (owner[b] === o ? dy[b] : 0) + (owner[u] === o ? dy[u] : 0) + (owner[d] === o ? dy[d] : 0) - 4 * dy[k0];
         vx[k0] += (-k * (dx[k0] - tx) - c * vx[k0] + kc * lx) * DT;
         vy[k0] += (-k * (dy[k0] - ty) - c * vy[k0] + kc * ly) * DT;
       }
@@ -334,6 +362,7 @@
     srcCanvas = c;
     A = c.height / c.width;
     regions = newRegions || defaultRegions();
+    faceOvals = []; // 자동 인식이 끝나면 다시 채운다
     grabs.clear();
     uploadTexture();
     buildMesh();
@@ -342,23 +371,27 @@
   }
 
   // ---------- 사진 불러오기 (기기 안에서만 처리) ----------
+  // Blob/File → 그릴 수 있는 객체와 원본 크기. EXIF 회전을 반영한다.
+  async function decodeImage(blob) {
+    if ('createImageBitmap' in window) {
+      try {
+        const bm = await createImageBitmap(blob, { imageOrientation: 'from-image' });
+        return { drawable: bm, sw: bm.width, sh: bm.height };
+      } catch { /* 아래 대체 경로 */ }
+    }
+    const url = URL.createObjectURL(blob);
+    try {
+      const im = await new Promise((res, rej) => {
+        const el = new Image();
+        el.onload = () => res(el); el.onerror = rej; el.src = url;
+      });
+      return { drawable: im, sw: im.naturalWidth, sh: im.naturalHeight };
+    } finally { URL.revokeObjectURL(url); }
+  }
+
   async function loadFile(file) {
     try {
-      let drawable, sw, sh;
-      if ('createImageBitmap' in window) {
-        try { drawable = await createImageBitmap(file, { imageOrientation: 'from-image' }); } catch { /* 아래 대체 경로 */ }
-      }
-      if (drawable) { sw = drawable.width; sh = drawable.height; }
-      else {
-        const url = URL.createObjectURL(file);
-        try {
-          drawable = await new Promise((res, rej) => {
-            const im = new Image();
-            im.onload = () => res(im); im.onerror = rej; im.src = url;
-          });
-        } finally { URL.revokeObjectURL(url); }
-        sw = drawable.naturalWidth; sh = drawable.naturalHeight;
-      }
+      const { drawable, sw, sh } = await decodeImage(file);
       setImage(drawable, sw, sh, null);
       if (drawable.close) drawable.close();
     } catch (e) {
@@ -368,6 +401,22 @@
       return;
     }
     await autoPlaceCheeks();
+  }
+
+  // ---------- 샘플 사진 (AI로 만든 가상의 아기. 실존 인물 아님) ----------
+  // 볼 위치는 detectFaces로 미리 계산해 두었다. 덕분에 첫 화면에서 인식 모델(15MB)을 내려받지 않는다.
+  // 사진을 바꾸면 이 좌표도 다시 계산할 것 (브라우저 콘솔에서 __cheek.detectFaces).
+  const SAMPLES = [
+    { src: 'samples/baby1.jpg', regions: [{ cx: 0.3516, cy: 0.7302, r: 0.1 }, { cx: 0.6851, cy: 0.6989, r: 0.1 }] },
+    { src: 'samples/baby2.jpg', regions: [{ cx: 0.3380, cy: 0.7270, r: 0.1 }, { cx: 0.6640, cy: 0.7574, r: 0.1 }] },
+    { src: 'samples/baby3.jpg', regions: [{ cx: 0.3451, cy: 0.6601, r: 0.1 }, { cx: 0.6823, cy: 0.6098, r: 0.1 }] },
+  ];
+  async function loadSample(i) {
+    const smp = SAMPLES[i];
+    const blob = await (await fetch(smp.src)).blob();
+    const { drawable, sw, sh } = await decodeImage(blob);
+    setImage(drawable, sw, sh, smp.regions.map((r) => ({ ...r })));
+    if (drawable.close) drawable.close();
   }
 
   // ---------- 자동 볼 인식 (MediaPipe Face Landmarker, 기기 안에서만 실행) ----------
@@ -450,6 +499,20 @@
     return faces.sort((p, q) => q.W - p.W);
   }
 
+  // 인식된 얼굴 목록 → 볼 영역(어느 얼굴 것인지 표시)과 얼굴 타원
+  function regionsAndOvals(faces) {
+    const regs = [], ovals = [];
+    faces.forEach((f, id) => {
+      for (const c of f.cheeks) regs.push({ ...c, face: id, W: f.W });
+      ovals.push({
+        id, W: f.W,
+        cx: (f.box.x0 + f.box.x1) / 2, cy: (f.box.y0 + f.box.y1) / 2,
+        rx: ((f.box.x1 - f.box.x0) / 2) * 1.05, ry: ((f.box.y1 - f.box.y0) / 2) * 1.05,
+      });
+    });
+    return { regs, ovals };
+  }
+
   // 얼굴이 작게 찍힌 사진은 볼이 손가락보다 작아 잡기 어렵다. 얼굴 쪽을 잘라 크게 보여준다.
   // 원본 파일은 건드리지 않고, 화면에 쓰는 텍스처만 다시 만든다.
   const TARGET_FACE = 0.5;  // 확대 후 얼굴 폭이 화면 사진 가로의 이 비율이 되게
@@ -470,8 +533,13 @@
     const c = document.createElement('canvas');
     c.width = Math.round(w * px); c.height = Math.round(h * px);
     c.getContext('2d').drawImage(srcCanvas, x0 * px, y0 * px, c.width, c.height, 0, 0, c.width, c.height);
-    const regs = faces.flatMap((f) => f.cheeks).map((g) => ({ cx: (g.cx - x0) / w, cy: (g.cy - y0) / w, r: g.r / w }));
-    return { canvas: c, regions: regs };
+    const { regs, ovals } = regionsAndOvals(faces);
+    const T = (g) => ({ ...g, cx: (g.cx - x0) / w, cy: (g.cy - y0) / w });
+    return {
+      canvas: c,
+      regions: regs.map((g) => ({ ...T(g), r: g.r / w })),
+      ovals: ovals.map((o) => ({ ...T(o), rx: o.rx / w, ry: o.ry / w })),
+    };
   }
 
   let detecting = false, detectToken = 0;
@@ -487,47 +555,15 @@
     $('#busy').hidden = true;
     if (faces && faces.length) {
       const crop = cropToFaces(faces);
-      if (crop) setImage(crop.canvas, crop.canvas.width, crop.canvas.height, crop.regions);
-      else { regions = faces.flatMap((f) => f.cheeks); settle(); updateFree(); buildRegionEls(); }
+      if (crop) { setImage(crop.canvas, crop.canvas.width, crop.canvas.height, crop.regions); faceOvals = crop.ovals; }
+      else { const ro = regionsAndOvals(faces); regions = ro.regs; faceOvals = ro.ovals; }
+      settle(); updateFree(); buildRegionEls();
       setEditing(false);
       toast(faces.length > 1 ? `얼굴 ${faces.length}개를 찾았어요! 볼을 잡고 당겨보세요` : '볼을 찾았어요! 잡고 당겨보세요');
     } else {
       setEditing(true);
       toast(faces ? '얼굴을 못 찾았어요. 원을 볼 위로 옮겨주세요' : '자동 인식을 못 했어요. 원을 볼 위로 옮겨주세요');
     }
-  }
-
-  // 사진이 없을 때 바로 만져볼 수 있는 연습용 얼굴. 배경 격자는 "배경이 같이 늘어나는지" 확인용.
-  function makeSample() {
-    const W = 900, H = 1200;
-    const c = document.createElement('canvas'); c.width = W; c.height = H;
-    const g = c.getContext('2d');
-    g.fillStyle = '#cfe3ea'; g.fillRect(0, 0, W, H);
-    g.strokeStyle = '#a9c6d1'; g.lineWidth = 3;
-    for (let x = 0; x <= W; x += 60) { g.beginPath(); g.moveTo(x, 0); g.lineTo(x, H); g.stroke(); }
-    for (let y = 0; y <= H; y += 60) { g.beginPath(); g.moveTo(0, y); g.lineTo(W, y); g.stroke(); }
-    g.fillStyle = '#5b7fa6'; g.beginPath(); g.ellipse(450, 1230, 380, 260, 0, 0, 7); g.fill(); // 어깨
-    g.fillStyle = '#f2c6a5'; g.fillRect(385, 840, 130, 160);                                   // 목
-    g.fillStyle = '#3a2a22'; g.beginPath(); g.ellipse(450, 520, 335, 360, 0, 0, 7); g.fill(); // 머리카락
-    g.fillStyle = '#f7d2b4'; g.beginPath(); g.ellipse(450, 600, 290, 330, 0, 0, 7); g.fill(); // 얼굴
-    g.fillStyle = '#3a2a22'; g.beginPath(); g.ellipse(450, 330, 290, 130, 0, Math.PI, 0); g.fill(); // 앞머리
-    g.fillStyle = 'rgba(255,120,120,.45)';
-    g.beginPath(); g.ellipse(290, 700, 78, 60, 0, 0, 7); g.fill();
-    g.beginPath(); g.ellipse(610, 700, 78, 60, 0, 0, 7); g.fill();
-    g.fillStyle = '#2a1d18';
-    g.beginPath(); g.ellipse(340, 560, 26, 34, 0, 0, 7); g.fill();
-    g.beginPath(); g.ellipse(560, 560, 26, 34, 0, 0, 7); g.fill();
-    g.fillStyle = '#fff';
-    g.beginPath(); g.arc(349, 548, 9, 0, 7); g.fill();
-    g.beginPath(); g.arc(569, 548, 9, 0, 7); g.fill();
-    g.strokeStyle = '#2a1d18'; g.lineWidth = 9; g.lineCap = 'round';
-    g.beginPath(); g.moveTo(300, 490); g.quadraticCurveTo(340, 465, 385, 488); g.stroke();
-    g.beginPath(); g.moveTo(515, 488); g.quadraticCurveTo(560, 465, 600, 490); g.stroke();
-    g.strokeStyle = '#d9a583'; g.lineWidth = 7;
-    g.beginPath(); g.moveTo(450, 610); g.quadraticCurveTo(432, 680, 458, 690); g.stroke();
-    g.strokeStyle = '#b5443f'; g.lineWidth = 10;
-    g.beginPath(); g.moveTo(385, 770); g.quadraticCurveTo(450, 830, 515, 770); g.stroke();
-    return c;
   }
 
   // ---------- 좌표 변환 ----------
@@ -715,6 +751,17 @@
   $('#pickGallery').addEventListener('click', () => openInput('#file'));
   $('#pickCamera').addEventListener('click', () => openInput('#fileCam'));
   $('#pickClose').addEventListener('click', () => { $('#pick').hidden = true; });
+  SAMPLES.forEach((smp, i) => {
+    const b = document.createElement('button');
+    b.innerHTML = `<img src="${smp.src}" alt="샘플 아기 ${i + 1}" loading="lazy">`;
+    b.addEventListener('click', () => {
+      $('#pick').hidden = true;
+      stopDemo();
+      loadSample(i).then(() => { setEditing(false); toast('볼을 잡고 당겨보세요'); })
+        .catch((e) => { console.error(e); toast('샘플 사진을 불러오지 못했어요'); });
+    });
+    $('#sampleRow').appendChild(b);
+  });
   $('#btnPhoto').addEventListener('click', () => { finishOnboarding(); pickPhoto(); });
   $('#btnHelp').addEventListener('click', () => {
     if (editing) setEditing(false);
@@ -890,19 +937,14 @@
 
   initGL();
   syncUI();
-  const sample = makeSample();
-  // 연습용 얼굴의 볼터치 위치에 맞춘 기본 영역
-  setImage(sample, sample.width, sample.height, [
-    { cx: 290 / 900, cy: 700 / 900, r: 0.115 },
-    { cx: 610 / 900, cy: 700 / 900, r: 0.115 },
-  ]);
-  setEditing(false);
   new ResizeObserver(layout).observe(stage);
-  if (!flag('cheek.onboarded')) startOnboarding();
+  loadSample(0)
+    .then(() => { setEditing(false); if (!flag('cheek.onboarded')) startOnboarding(); })
+    .catch((e) => { console.error(e); toast('샘플 사진을 불러오지 못했어요. 사진 불러오기를 눌러주세요'); });
 
   // 디버그/자동 검증용
   window.__cheek = {
     settings, grabs, detectFaces, beginGrab, moveGrab, endGrab, step, render, toImg,
-    get state() { return { n, cols, rows, A, dx, dy, vx, vy, free, regions, imgRect, running, detecting, coachStep, editing, selected }; },
+    get state() { return { n, cols, rows, A, dx, dy, vx, vy, free, owner, regions, faceOvals, imgRect, running, detecting, coachStep, editing, selected }; },
   };
 })();
