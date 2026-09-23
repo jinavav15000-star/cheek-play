@@ -3,14 +3,30 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<!-- 사진·좌표는 기기 밖으로 나가지 않는다. MediaPipe 번들에 들어 있는 진단 로그 전송(odml.pa.googleapis.com)까지 막는다.
+     나중에 외부 API를 붙이면 여기에 도메인을 추가해야 한다. default-src는 넣지 말 것(인라인 스크립트·wasm 컴파일 차단). -->
+<meta http-equiv="Content-Security-Policy" content="connect-src 'self'">
+<meta name="color-scheme" content="only light">
 <meta name="theme-color" content="#FFF4EE">
+<meta name="description" content="사진 속 볼을 잡아당겼다 놓으면 출렁~ 사진은 폰 밖으로 나가지 않아요.">
+<meta property="og:title" content="볼 꼬집기">
+<meta property="og:description" content="사진 속 볼을 잡아당겼다 놓으면 출렁~ 사진은 폰 밖으로 나가지 않아요.">
+<meta property="og:image" content="https://jinavav15000-star.github.io/cheek-play/og.jpg">
+<meta property="og:url" content="https://jinavav15000-star.github.io/cheek-play/">
+<meta property="og:type" content="website">
+<meta name="twitter:card" content="summary_large_image">
 <title>볼 꼬집기</title>
+<link rel="icon" href="favicon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<link rel="preload" href="fonts/jua.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="preload" href="samples/baby1.jpg" as="fetch" crossorigin>
+<link rel="modulepreload" href="vendor/mediapipe/vision_bundle.mjs">
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
 <header class="top">
   <h1>볼 꼬집기</h1>
-  <p id="hint" class="hint">볼을 누른 채로 당겼다가 놓아보세요</p>
+  <p id="hint" class="hint">볼을 누른 채 끌었다가 놓아보세요</p>
   <div class="top-actions">
     <button id="btnHelp" class="chip" aria-label="사용법 다시 보기">?</button>
     <button id="btnFeedback" class="chip">의견 보내기</button>
@@ -18,25 +34,29 @@
 </header>
 
 <main id="stage" class="stage">
-  <canvas id="gl"></canvas>
+  <canvas id="gl" role="img" aria-label="볼을 당길 수 있는 사진"></canvas>
   <div id="regions" class="regions"></div>
   <div id="finger" class="finger" hidden></div>
-  <div id="busy" class="busy" hidden><i class="spin"></i><span>볼 찾는 중…</span></div>
-  <div id="coach" class="coach" hidden>
+  <div id="busy" class="busy" role="status" aria-live="polite" hidden>
+    <i class="spin"></i><span id="busyText">볼 찾는 중…</span>
+    <button id="busyManual" class="chip" hidden>직접 맞추기</button>
+  </div>
+  <div id="coach" class="coach" role="status" aria-live="polite" hidden>
     <p id="coachText"></p>
     <div id="coachBtns" class="coach-btns"></div>
   </div>
   <button id="resetView" class="chip reset-view" hidden>원래 크기</button>
-  <div id="toast" class="toast" hidden></div>
+  <button id="shareChip" class="chip share-chip" hidden>이 장면 저장·공유</button>
+  <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
 </main>
 
 <nav class="bottom">
   <button id="btnPhoto" class="btn pink">사진 불러오기</button>
-  <button id="btnEdit" class="btn mint">볼 위치</button>
+  <button id="btnEdit" class="btn mint" aria-pressed="false">볼 위치 맞추기</button>
   <button id="btnFeel" class="btn butter">느낌 조절</button>
   <!-- display:none 대신 화면 밖에 두어 폰 브라우저에서 click()이 막히지 않게 한다 -->
-  <input id="file" type="file" accept="image/*" class="offscreen">
-  <input id="fileCam" type="file" accept="image/*" capture="user" class="offscreen">
+  <input id="file" type="file" accept="image/*" class="offscreen" tabindex="-1">
+  <input id="fileCam" type="file" accept="image/*" capture="environment" class="offscreen" tabindex="-1">
 </nav>
 
 <section id="editPanel" class="sheet edit-panel" hidden>
@@ -61,44 +81,61 @@
       </div>
     </div>
   </div>
-  <p class="note">원을 손가락으로 끌어도 됩니다. 화살표를 길게 누르면 계속 움직입니다.</p>
+  <div class="edit-actions">
+    <button id="regionAdd" class="btn small">볼 추가</button>
+    <button id="regionDel" class="btn small">이 볼 지우기</button>
+    <button id="regionRefind" class="btn small">다시 찾기</button>
+  </div>
+  <label class="check"><input id="cShow" type="checkbox"> 놀 때도 볼 원 흐리게 보이기</label>
+  <p class="note">사진을 톡 누르면 선택한 원이 그 자리로 가요. 원을 끌거나 화살표로 미세 조절하고, 분홍 점을 끌면 크기가 바뀌어요.</p>
 </section>
 
 <section id="pick" class="sheet pick" hidden>
   <div class="sheet-head">
-    <strong>사진 가져오기</strong>
+    <h2>사진 불러오기</h2>
     <button id="pickClose" class="btn small">닫기</button>
   </div>
+  <p class="note strong">사진은 폰 안에서만 처리돼요. 어디에도 올라가지 않아요.</p>
   <button id="pickGallery" class="btn primary tall">폰에 있는 사진에서 고르기</button>
-  <button id="pickCamera" class="btn mint tall">카메라로 지금 찍기</button>
-  <p class="note">또는 샘플 아기 사진으로 해보기 (AI로 만든 가상의 아기입니다)</p>
+  <button id="pickCamera" class="btn mint tall">카메라로 찍기</button>
+  <p class="note">또는 샘플 아기 사진으로 해보기 (AI로 만든 가상의 아기예요)</p>
   <div id="sampleRow" class="samples"></div>
-  <p class="note">갤럭시: <b>파일</b>을 누르면 최근 사진이 나오고, <b>찾아보기 → 갤러리</b>를 누르면 갤러리 앱에서 고를 수 있습니다. 아이폰: <b>사진 보관함</b>을 누르세요.</p>
-  <p class="note">사진은 이 기기 안에서만 처리되고 어디에도 업로드되지 않습니다. 정면 얼굴 사진이 가장 잘 됩니다.</p>
+  <p class="note">선택창이 뜨면 갤러리(사진)를 고르세요. 정면 얼굴 사진이 가장 잘 돼요. 강아지·고양이·아기 배도 원을 놓으면 돼요.</p>
 </section>
 
 <section id="sheet" class="sheet" hidden>
   <div class="sheet-head">
-    <strong>느낌 조절</strong>
+    <h2>느낌 조절</h2>
     <button id="sheetClose" class="btn small">닫기</button>
   </div>
-  <label>출렁이는 속도 <output id="oFreq"></output>
-    <input id="sFreq" type="range" min="2" max="8" step="0.1">
-  </label>
-  <label>출렁임 정도 <output id="oWobble"></output>
-    <input id="sWobble" type="range" min="0" max="1" step="0.01">
-  </label>
-  <label>늘어나는 한계 <output id="oStretch"></output>
-    <input id="sStretch" type="range" min="0.3" max="1" step="0.01">
-  </label>
-  <label>잡히는 범위 <output id="oGrab"></output>
-    <input id="sGrab" type="range" min="0.6" max="1.4" step="0.01">
-  </label>
-  <label class="check"><input id="cMask" type="checkbox"> 볼 영역만 움직이기 (얼굴·배경 고정)</label>
-  <label class="check"><input id="cShow" type="checkbox"> 볼 영역 항상 표시</label>
+  <div class="presets" role="group" aria-label="느낌 프리셋">
+    <button class="chip preset" data-preset="soft">말랑</button>
+    <button class="chip preset" data-preset="chewy">쫀득</button>
+    <button class="chip preset" data-preset="bouncy">탱탱</button>
+  </div>
   <label class="check"><input id="cHaptic" type="checkbox"> 진동 피드백</label>
-  <button id="btnReset" class="btn small">기본값으로</button>
-  <p class="note">사진과 얼굴 인식은 모두 이 기기 안에서만 처리되고 어디에도 업로드되지 않습니다.</p>
+  <details class="more">
+    <summary>더 세밀하게</summary>
+    <label>출렁임 빠르기 <output id="oFreq"></output>
+      <input id="sFreq" type="range" min="2" max="8" step="0.1">
+      <span class="ends"><span>느긋</span><span>통통</span></span>
+    </label>
+    <label>출렁임 크기 <output id="oWobble"></output>
+      <input id="sWobble" type="range" min="0" max="1" step="0.01">
+      <span class="ends"><span>살짝</span><span>흐물</span></span>
+    </label>
+    <label>얼마나 늘어나나 <output id="oStretch"></output>
+      <input id="sStretch" type="range" min="0.3" max="1" step="0.01">
+      <span class="ends"><span>조금</span><span>쭉</span></span>
+    </label>
+    <label>잡히는 넓이 <output id="oGrab"></output>
+      <input id="sGrab" type="range" min="0.6" max="1.4" step="0.01">
+      <span class="ends"><span>좁게</span><span>넓게</span></span>
+    </label>
+    <label class="check dev-only" hidden><input id="cMask" type="checkbox"> 볼 영역만 움직이기 (끄면 배경까지 늘어남)</label>
+    <button id="btnReset" class="btn small">기본값으로</button>
+  </details>
+  <p class="note">사진과 얼굴 인식은 모두 폰 안에서만 처리되고 어디에도 올라가지 않아요. <a href="privacy.html" target="_blank" rel="noopener">개인정보 · 오픈소스</a></p>
 </section>
 
 <!-- iOS 사파리(18+)용 햅틱 우회: 스위치형 체크박스를 토글하면 시스템 햅틱이 울린다. 화면에는 보이지 않는다. -->

@@ -11,14 +11,16 @@
 }
 
 :root {
+  color-scheme: only light;   /* 크롬 "웹사이트 어둡게"·삼성인터넷 다크 모드가 파스텔을 뒤집지 않게 */
   --bg: #FFF4EE;          /* 복숭아 우유 */
-  --stage: #FFECEF;       /* 사진 바깥 여백 */
+  --stage: #FFECEF;       /* 사진 바깥 여백 (= app.js clearColor) */
   --surface: #FFFFFF;
   --blush: #FFE4E8;
   --line: #F6D9DE;
   --ink: #5A4650;         /* 검정 대신 자두빛 갈색: 눈이 덜 피로하다 */
-  --muted: #9B8791;
+  --muted: #7A6570;       /* 흰색 위 5.3:1, 배경 위 4.9:1 */
   --pink: #FFA7B8;  --pink-deep: #F58AA0;  --pink-ink: #6B2A3C;
+  --accent-strong: #C94A6C; /* 원 테두리·포커스처럼 대비가 필요한 곳 */
   --mint: #C6EDE0;  --mint-deep: #9FDCC8;  --mint-ink: #245646;
   --butter: #FFE9A8; --butter-deep: #F7D877; --butter-ink: #6A5312;
   --lilac: #E7DFFF;
@@ -45,22 +47,24 @@ html, body {
 body {
   display: flex;
   flex-direction: column;
+  height: 100vh;
   height: 100dvh;
   padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
 }
 
 button { font-family: inherit; color: inherit; cursor: pointer; }
-:focus-visible { outline: 3px solid var(--pink-deep); outline-offset: 2px; }
+:focus-visible { outline: 3px solid var(--accent-strong); outline-offset: 2px; }
+a { color: var(--pink-ink); }
 
 /* ---------- 상단 ---------- */
-.top { padding: 12px 16px 8px; display: flex; align-items: center; gap: 12px; }
+.top { padding: 10px 16px 8px; display: flex; align-items: center; gap: 12px; }
 .top h1 {
   margin: 0; font-family: var(--display); font-weight: 400; font-size: 24px; line-height: 1;
   letter-spacing: -0.01em; color: var(--pink-ink); white-space: nowrap;
   display: flex; align-items: center; gap: 6px;
-  animation: wobble .9s cubic-bezier(.34, 1.56, .64, 1) both;
   transform-origin: 10% 60%;
 }
+.fonts-ready .top h1 { animation: wobble .9s cubic-bezier(.34, 1.56, .64, 1) both; }
 /* 볼터치 두 점: 제목 옆의 작은 서명 */
 .top h1::after {
   content: ''; width: 22px; height: 10px; flex: none; margin-top: 4px;
@@ -70,14 +74,15 @@ button { font-family: inherit; color: inherit; cursor: pointer; }
   opacity: .9;
 }
 .hint { flex: 1; min-width: 0; margin: 0; font-size: 13px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.top-actions { display: flex; gap: 6px; flex: none; }
+.top-actions { display: flex; gap: 8px; flex: none; }
 .chip {
-  min-height: 34px; min-width: 34px; padding: 0 12px; border-radius: 999px;
+  min-height: 40px; min-width: 40px; padding: 0 14px; border-radius: 999px;
   border: 1.5px solid var(--line); background: var(--surface); color: var(--pink-ink);
   font-family: var(--display); font-size: 14px; line-height: 1;
   box-shadow: 0 2px 0 var(--line);
 }
 .chip:active { transform: translateY(2px); box-shadow: none; }
+.chip[hidden] { display: none; }
 
 /* ---------- 무대 ---------- */
 .stage {
@@ -91,8 +96,10 @@ button { font-family: inherit; color: inherit; cursor: pointer; }
 .region {
   position: absolute;
   border-radius: 50%;
-  border: 2px dashed var(--pink-deep);
-  background: rgba(255, 167, 184, 0.16);
+  border: 2px dashed var(--accent-strong);
+  /* 흰 이중 링: 실사진 어디에 놓여도 보인다 */
+  box-shadow: 0 0 0 2px rgba(255, 255, 255, .9), inset 0 0 0 2px rgba(255, 255, 255, .9);
+  background: rgba(255, 167, 184, 0.14);
   display: none;
   touch-action: none;
 }
@@ -109,35 +116,38 @@ button { font-family: inherit; color: inherit; cursor: pointer; }
   box-shadow: 0 3px 8px rgba(107, 42, 60, .25);
   touch-action: none;
 }
-.editing .region { display: block; pointer-events: auto; cursor: grab; opacity: .65; }
-.editing .region.selected { opacity: 1; border-style: solid; border-width: 3px; background: rgba(255, 167, 184, 0.24); }
+.region .handle::before { content: ''; position: absolute; inset: -9px; } /* 보이는 크기는 그대로, 닿는 범위만 44px */
+.editing .region { display: block; pointer-events: auto; cursor: grab; }
+.editing .region.selected { border-style: solid; border-width: 3px; background: rgba(255, 167, 184, 0.22); }
 .editing .region:not(.selected) .handle { display: none; }
-.ghost .region { display: block; border-width: 1.5px; background: transparent; opacity: .5; }
+.ghost .region { display: block; border-width: 1.5px; background: transparent; opacity: .55; box-shadow: none; }
 .ghost .region .tag, .ghost .region .handle { display: none; }
 
 .toast {
   position: absolute; left: 50%; bottom: 14px; transform: translateX(-50%);
   max-width: calc(100% - 24px);
-  padding: 9px 16px; border-radius: 999px; font-size: 13px;
-  background: rgba(90, 70, 80, .92); color: #fff; pointer-events: none; white-space: nowrap;
-  overflow: hidden; text-overflow: ellipsis;
+  padding: 10px 16px; border-radius: 16px; font-size: 13.5px; line-height: 1.4; text-align: center;
+  background: rgba(90, 70, 80, .92); color: #fff; pointer-events: none;
   animation: rise .25s ease-out;
 }
 
 .busy {
   position: absolute; left: 50%; top: 14px; transform: translateX(-50%);
+  max-width: calc(100% - 24px);
   display: flex; align-items: center; gap: 8px;
-  padding: 8px 14px; border-radius: 999px; font-size: 13px;
-  background: var(--surface); color: var(--pink-ink); pointer-events: none; white-space: nowrap;
-  box-shadow: var(--shadow-soft);
+  padding: 8px 12px 8px 14px; border-radius: 999px; font-size: 13px;
+  background: var(--surface); color: var(--pink-ink); white-space: nowrap;
+  box-shadow: var(--shadow-soft); pointer-events: none;
 }
+.busy .chip { pointer-events: auto; min-height: 32px; padding: 0 10px; font-size: 13px; }
 .spin {
-  width: 14px; height: 14px; border-radius: 50%;
+  flex: none; width: 14px; height: 14px; border-radius: 50%;
   border: 2.5px solid var(--blush); border-top-color: var(--pink-deep);
   animation: spin .8s linear infinite;
 }
 
 .reset-view { position: absolute; right: 12px; top: 12px; }
+.share-chip { position: absolute; right: 12px; bottom: 14px; background: var(--pink); border-color: transparent; box-shadow: 0 3px 0 var(--pink-deep); animation: pop .35s cubic-bezier(.34, 1.56, .64, 1) both; }
 
 /* 시범 손가락 */
 .finger {
@@ -157,6 +167,7 @@ button { font-family: inherit; color: inherit; cursor: pointer; }
   animation: pop .45s cubic-bezier(.34, 1.56, .64, 1) both;
 }
 .coach p { margin: 0; font-family: var(--display); font-size: 17px; line-height: 1.4; text-align: center; color: var(--pink-ink); }
+.coach p.small { font-family: var(--body); font-size: 14px; color: var(--ink); }
 .coach-btns { display: flex; gap: 8px; margin-top: 12px; }
 .coach-btns:empty { display: none; }
 .coach-btns .btn { min-height: 44px; font-size: 15px; }
@@ -165,13 +176,14 @@ button { font-family: inherit; color: inherit; cursor: pointer; }
 .btn {
   flex: 1; min-height: 50px; padding: 0 14px;
   border-radius: 999px; border: none;
-  background: var(--surface); color: var(--pink-ink);
+  background: var(--blush); color: var(--pink-ink);
   font-family: var(--display); font-size: 16px; line-height: 1;
   --edge: var(--line);
   box-shadow: inset 0 2px 0 rgba(255, 255, 255, .8), 0 4px 0 var(--edge);
   transition: transform .08s, box-shadow .08s;
 }
 .btn:active { transform: translateY(4px); box-shadow: inset 0 2px 0 rgba(255, 255, 255, .8), 0 0 0 var(--edge); }
+.btn:disabled { opacity: .5; transform: none; }
 .btn.primary, .btn.pink { background: var(--pink); color: var(--pink-ink); --edge: var(--pink-deep); }
 .btn.mint { background: var(--mint); color: var(--mint-ink); --edge: var(--mint-deep); }
 .btn.butter { background: var(--butter); color: var(--butter-ink); --edge: var(--butter-deep); }
@@ -186,25 +198,31 @@ button { font-family: inherit; color: inherit; cursor: pointer; }
 .sheet {
   /* 겹치는 오버레이가 아니라 레이아웃의 일부: 열리면 사진이 위로 줄어들어 조절하면서 바로 만져볼 수 있다 */
   flex: none; order: 3;
-  margin: 0 12px; padding: 14px 16px 16px;
+  margin: 0 12px; padding: 14px 16px 24px;
   background: var(--surface);
   border-radius: 24px 24px 0 0;
   box-shadow: var(--shadow-soft);
   display: flex; flex-direction: column; gap: 12px;
-  max-height: 46dvh; overflow-y: auto;
+  max-height: 46vh;
+  max-height: 46dvh;
+  overflow-y: auto;
+  /* 아래로 더 있다는 단서 */
+  -webkit-mask-image: linear-gradient(#000 calc(100% - 22px), transparent);
+  mask-image: linear-gradient(#000 calc(100% - 22px), transparent);
 }
 .sheet > * { flex: none; }
-.reset-view[hidden], .pick[hidden], .sheet[hidden], .edit-panel[hidden], .toast[hidden], .coach[hidden], .busy[hidden], .finger[hidden] { display: none; }
+.reset-view[hidden], .share-chip[hidden], .pick[hidden], .sheet[hidden], .edit-panel[hidden], .toast[hidden], .coach[hidden], .busy[hidden], .finger[hidden], .dev-only[hidden] { display: none; }
 .sheet-head { display: flex; justify-content: space-between; align-items: center; gap: 10px; }
-.sheet-head strong { font-family: var(--display); font-weight: 400; font-size: 19px; color: var(--pink-ink); }
+.sheet-head h2 { margin: 0; font-family: var(--display); font-weight: 400; font-size: 19px; color: var(--pink-ink); }
 .sheet label { display: flex; flex-direction: column; gap: 6px; font-size: 14px; color: var(--muted); }
 .sheet label output { color: var(--ink); font-variant-numeric: tabular-nums; margin-left: 6px; }
 .sheet label:not(.check) { display: grid; grid-template-columns: 1fr auto; }
 .sheet label:not(.check) input { grid-column: 1 / -1; }
+.sheet label .ends { grid-column: 1 / -1; display: flex; justify-content: space-between; font-size: 12px; color: var(--muted); margin-top: -4px; }
 .sheet label.check { flex-direction: row; align-items: center; gap: 10px; color: var(--ink); min-height: 32px; }
 /* 슬라이더: 기본 트랙이 검게 나와 파스텔과 안 맞으므로 직접 그린다 */
 .sheet input[type=range] {
-  -webkit-appearance: none; appearance: none; width: 100%; height: 28px; margin: 0;
+  -webkit-appearance: none; appearance: none; width: 100%; height: 32px; margin: 0;
   background: transparent; accent-color: var(--pink-deep);
 }
 .sheet input[type=range]::-webkit-slider-runnable-track { height: 8px; border-radius: 999px; background: var(--blush); }
@@ -217,17 +235,29 @@ button { font-family: inherit; color: inherit; cursor: pointer; }
 .sheet input[type=range]::-moz-range-thumb {
   width: 20px; height: 20px; border-radius: 50%; background: var(--pink); border: 3px solid #fff; box-shadow: 0 2px 0 var(--pink-deep);
 }
-.sheet input[type=checkbox] { width: 20px; height: 20px; accent-color: var(--pink-deep); }
+.sheet input[type=checkbox] { width: 22px; height: 22px; accent-color: var(--accent-strong); }
 .note { margin: 0; font-size: 12.5px; line-height: 1.5; color: var(--muted); }
+.note.strong { color: var(--ink); font-size: 13.5px; }
 .note b { color: var(--ink); font-weight: 600; }
+
+.presets { display: flex; gap: 8px; }
+.presets .chip { flex: 1; min-height: 44px; font-size: 15px; }
+.presets .chip.on { background: var(--pink); border-color: var(--pink-deep); box-shadow: 0 2px 0 var(--pink-deep); }
+details.more { display: flex; flex-direction: column; gap: 12px; }
+details.more summary { cursor: pointer; font-family: var(--display); color: var(--pink-ink); font-size: 15px; list-style: none; display: flex; align-items: center; gap: 6px; min-height: 36px; }
+details.more summary::-webkit-details-marker { display: none; }
+details.more summary::before { content: '▸'; font-size: 12px; transition: transform .15s; }
+details.more[open] summary::before { transform: rotate(90deg); }
+details.more > *:not(summary) { margin-top: 12px; }
 
 /* 볼 위치 편집 패널 */
 .tabs { display: flex; gap: 6px; overflow-x: auto; flex: 1; min-width: 0; }
-.tabs .chip { flex: none; }
+.tabs .chip { flex: none; padding: 0 12px; }
 .tabs .chip.on { background: var(--pink); border-color: var(--pink-deep); box-shadow: 0 2px 0 var(--pink-deep); }
-.edit-grid { display: grid; grid-template-columns: 136px 1fr; gap: 14px; align-items: center; }
+.edit-grid { display: grid; grid-template-columns: 148px 1fr; gap: 14px; align-items: center; }
+@media (max-width: 340px) { .edit-grid { grid-template-columns: 1fr; } }
 .dpad {
-  display: grid; grid-template-columns: repeat(3, 40px); grid-template-rows: repeat(3, 40px); gap: 4px;
+  display: grid; grid-template-columns: repeat(3, 44px); grid-template-rows: repeat(3, 44px); gap: 4px;
   justify-content: center;
 }
 .dbtn {
@@ -243,20 +273,36 @@ button { font-family: inherit; color: inherit; cursor: pointer; }
 .size-box { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
 .size-btns { display: flex; gap: 8px; }
 .size-btns .btn { flex: 1; }
+.edit-actions { display: flex; gap: 8px; }
+.edit-actions .btn { flex: 1; padding: 0 8px; white-space: nowrap; }
 
 /* 샘플 사진 썸네일 */
 .samples { display: flex; gap: 10px; }
 .samples button {
-  flex: 1; aspect-ratio: 3 / 4; padding: 0; overflow: hidden;
+  flex: 1; height: 96px; padding: 0; overflow: hidden;
   border-radius: 16px; border: 3px solid var(--blush); background: var(--blush);
   box-shadow: 0 3px 0 var(--line);
 }
 .samples button:active { border-color: var(--pink-deep); transform: translateY(3px); box-shadow: none; }
-.samples img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.samples img { width: 100%; height: 100%; object-fit: cover; display: block; pointer-events: none; -webkit-touch-callout: none; }
 
 .offscreen { position: fixed; left: -9999px; top: 0; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
 /* display:none 이면 햅틱이 안 울리므로 화면 밖으로만 치운다 */
 .ios-haptic { position: fixed; left: -9999px; top: 0; width: 1px; height: 1px; overflow: hidden; opacity: 0; pointer-events: none; }
+
+/* ---------- 가로 모드·태블릿 ---------- */
+@media (orientation: landscape) and (max-height: 560px) {
+  body { flex-direction: row; flex-wrap: wrap; }
+  .top { width: 100%; padding: 6px 12px 4px; }
+  .stage { flex: 1; margin: 0 8px 8px 12px; }
+  .bottom { flex-direction: column; width: 150px; padding: 0 12px 8px 0; gap: 8px; order: 2; }
+  .bottom .btn { min-height: 44px; }
+  .sheet { order: 3; width: 100%; max-height: 40vh; max-height: 40dvh; }
+}
+@media (min-width: 700px) {
+  .top, .bottom { max-width: 640px; margin-left: auto; margin-right: auto; width: 100%; }
+  .stage, .sheet { max-width: 616px; margin-left: auto; margin-right: auto; }
+}
 
 /* ---------- 움직임 ---------- */
 @keyframes wobble {
@@ -267,6 +313,6 @@ button { font-family: inherit; color: inherit; cursor: pointer; }
 @keyframes rise { from { opacity: 0; transform: translate(-50%, 6px); } }
 @keyframes spin { to { transform: rotate(360deg); } }
 @media (prefers-reduced-motion: reduce) {
-  .top h1, .coach, .toast { animation: none; }
+  .top h1, .coach, .toast, .share-chip { animation: none; }
   .btn, .chip, .dbtn, .finger { transition: none; }
 }
