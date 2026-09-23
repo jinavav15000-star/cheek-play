@@ -123,7 +123,7 @@
     gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([0, 0, 1, 0, 0, 1, 1, 1]), gl.STATIC_DRAW);
     gl.enableVertexAttribArray(locPos);
     gl.enableVertexAttribArray(locUV);
-    gl.clearColor(0x17 / 255, 0x12 / 255, 0x0f / 255, 1);
+    gl.clearColor(0xff / 255, 0xec / 255, 0xef / 255, 1); // = CSS --stage
   }
 
   // ---------- 메시 + 물리 상태 ----------
