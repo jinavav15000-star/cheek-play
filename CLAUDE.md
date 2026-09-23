@@ -28,6 +28,8 @@
 - 진동: 안드로이드는 `navigator.vibrate`, iOS 사파리는 `#iosHaptic`(`<input type=checkbox switch>`)를 `click()`해 시스템 햅틱을 빌린다(iOS 18+ 한정, 강도 조절 불가, `display:none`이면 안 울림). 확실한 해결은 Capacitor 네이티브 햅틱.
 
 ## 실행
+- 라이브: https://jinavav15000-star.github.io/cheek-play/ (GitHub Pages, `main` 푸시 시 자동 배포). 저장소는 공개.
+- 라이브는 `/cheek-play/` 하위 경로다. 모든 경로는 상대 경로(`./`)로 쓴다. 절대 경로(`/vendor/...`)를 쓰면 깨진다.
 - `./serve.sh` → 출력되는 주소를 같은 와이파이의 폰에서 연다.
 - Claude 미리보기: `.claude/launch.json`의 `cheek-play` (포트 8417).
 

@@ -3,7 +3,11 @@
 사진을 불러와 볼을 누른 채 당기면 피부처럼 늘어나고, 놓으면 출렁이며 원래대로 돌아오는 웹 시제품.
 사진은 기기 밖으로 나가지 않는다.
 
-## 갤럭시에서 열기
+## 실행 주소
+- 라이브(GitHub Pages, `main`에 올리면 1~2분 뒤 자동 반영): https://jinavav15000-star.github.io/cheek-play/
+- 저장소: https://github.com/jinavav15000-star/cheek-play (공개)
+
+## 맥에서 직접 띄우기
 ```bash
 ./serve.sh
 ```
