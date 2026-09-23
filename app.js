@@ -43,12 +43,18 @@
       vUV = aUV;
       gl_Position = vec4(uO.x + aPos.x * uS.x, uO.y - aPos.y * uS.y, 0.0, 1.0);
     }`;
+  // 2패스: 1) 변형된 메시에 사진을 그린다 2) 보호할 얼굴(앞사람)만 원본 위치에 다시 덮어 그린다.
+  // 2패스의 알파는 마스크 텍스처(얼굴 윤곽을 픽셀 단위로 칠한 것)에서 온다 → 격자와 무관하게 정확한 누끼.
   const FS = `
     precision mediump float;
-    varying vec2 vUV; uniform sampler2D uTex;
-    void main() { gl_FragColor = texture2D(uTex, vUV); }`;
+    varying vec2 vUV; uniform sampler2D uTex; uniform sampler2D uMask; uniform float uUseMask;
+    void main() {
+      vec4 c = texture2D(uTex, vUV);
+      float a = uUseMask > 0.5 ? texture2D(uMask, vUV).a : 1.0;
+      gl_FragColor = vec4(c.rgb, a);
+    }`;
 
-  let prog, locPos, locUV, locO, locS, posBuf, uvBuf, idxBuf, tex;
+  let prog, locPos, locUV, locO, locS, locUseMask, posBuf, restBuf, uvBuf, idxBuf, tex, maskTex, uintIndex;
 
   function initGL() {
     const sh = (type, src) => {
@@ -66,21 +72,27 @@
     locUV = gl.getAttribLocation(prog, 'aUV');
     locO = gl.getUniformLocation(prog, 'uO');
     locS = gl.getUniformLocation(prog, 'uS');
-    posBuf = gl.createBuffer(); uvBuf = gl.createBuffer(); idxBuf = gl.createBuffer();
-    tex = gl.createTexture();
+    locUseMask = gl.getUniformLocation(prog, 'uUseMask');
+    gl.uniform1i(gl.getUniformLocation(prog, 'uTex'), 0);
+    gl.uniform1i(gl.getUniformLocation(prog, 'uMask'), 1);
+    posBuf = gl.createBuffer(); restBuf = gl.createBuffer(); uvBuf = gl.createBuffer(); idxBuf = gl.createBuffer();
+    tex = gl.createTexture(); maskTex = gl.createTexture();
+    uintIndex = !!gl.getExtension('OES_element_index_uint'); // 격자가 촘촘하면 인덱스가 65535를 넘는다
+    gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
     gl.clearColor(0x17 / 255, 0x12 / 255, 0x0f / 255, 1);
   }
 
   // ---------- 메시 + 물리 상태 ----------
-  const GRID_LONG = 96; // 긴 변 기준 격자 칸 수
+  const GRID_FINE = 144, GRID_COARSE = 96; // 긴 변 기준 격자 칸 수. 촘촘할수록 확대했을 때 계단이 안 보인다.
   let A = 1;            // 이미지 세로/가로 비율
   let cols, rows, n, stride, indexCount;
   let restX, restY, dx, dy, vx, vy, tgtX, tgtY, held, free, owner, pos;
   let srcCanvas = null; // 텍스처 원본(컨텍스트 복구용)
 
   function buildMesh() {
-    if (A >= 1) { rows = GRID_LONG; cols = Math.max(8, Math.round(GRID_LONG / A)); }
-    else { cols = GRID_LONG; rows = Math.max(8, Math.round(GRID_LONG * A)); }
+    const G = uintIndex ? GRID_FINE : GRID_COARSE;
+    if (A >= 1) { rows = G; cols = Math.max(8, Math.round(G / A)); }
+    else { cols = G; rows = Math.max(8, Math.round(G * A)); }
     stride = cols + 1;
     n = stride * (rows + 1);
     restX = new Float32Array(n); restY = new Float32Array(n);
@@ -95,7 +107,7 @@
       restX[k] = i / cols; restY[k] = (j / rows) * A;
       uv[k * 2] = i / cols; uv[k * 2 + 1] = j / rows;
     }
-    const idx = new Uint16Array(cols * rows * 6);
+    const idx = new (uintIndex ? Uint32Array : Uint16Array)(cols * rows * 6);
     let p = 0;
     for (let j = 0; j < rows; j++) for (let i = 0; i < cols; i++) {
       const a = j * stride + i, b = a + 1, c = a + stride, d = c + 1;
@@ -109,6 +121,10 @@
     gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, idx, gl.STATIC_DRAW);
     gl.bindBuffer(gl.ARRAY_BUFFER, posBuf);
     gl.bufferData(gl.ARRAY_BUFFER, pos.byteLength, gl.DYNAMIC_DRAW);
+    const rest = new Float32Array(n * 2);
+    for (let k = 0; k < n; k++) { rest[k * 2] = restX[k]; rest[k * 2 + 1] = restY[k]; }
+    gl.bindBuffer(gl.ARRAY_BUFFER, restBuf);
+    gl.bufferData(gl.ARRAY_BUFFER, rest, gl.STATIC_DRAW);
     updateFree();
   }
 
@@ -204,8 +220,9 @@
       if (reg) g *= effMask(reg, restX[k], restY[k]);
       w[k] = g;
     }
-    grabs.set(id, { sx: x, sy: y, Dx: 0, Dy: 0, limit: Rg * settings.stretch, w });
+    grabs.set(id, { sx: x, sy: y, Dx: 0, Dy: 0, limit: Rg * settings.stretch, w, face: reg ? reg.face : -1 });
     updateTargets();
+    updateProtectMask();
     wake();
     return true;
   }
@@ -289,6 +306,7 @@
 
   function settle() {
     dx.fill(0); dy.fill(0); vx.fill(0); vy.fill(0);
+    maskActive = false; maskKey = '';
   }
 
   // ---------- 루프 ----------
@@ -309,17 +327,31 @@
 
   // ---------- 그리기 ----------
   let imgRect = { x: 0, y: 0, w: 1, h: 1 }; // 스테이지 안에서 사진이 차지하는 CSS 픽셀 영역
+  // 사용자가 조절하는 보기: z = 화면에 꽉 맞춘 크기 대비 배율, (cx, cy) = 화면 중앙에 오는 이미지 좌표
+  const view = { z: 1, cx: 0.5, cy: 0.5 };
+  const ZOOM_MAX = 6;
+  let fitW = 1;
+  function resetView() { view.z = 1; view.cx = 0.5; view.cy = A / 2; layout(); }
+  function viewChanged() { return view.z > 1.01 || Math.abs(view.cx - 0.5) > 0.01 || Math.abs(view.cy - A / 2) > 0.01; }
 
   function layout() {
     const r = stage.getBoundingClientRect();
     if (r.width < 2 || r.height < 2) return;
     const dpr = Math.min(window.devicePixelRatio || 1, 2);
-    canvas.width = Math.round(r.width * dpr);
-    canvas.height = Math.round(r.height * dpr);
-    gl.viewport(0, 0, canvas.width, canvas.height);
-    let iw, ih;
-    if (A > r.height / r.width) { ih = r.height; iw = ih / A; } else { iw = r.width; ih = iw * A; }
-    imgRect = { x: (r.width - iw) / 2, y: (r.height - ih) / 2, w: iw, h: ih };
+    if (canvas.width !== Math.round(r.width * dpr) || canvas.height !== Math.round(r.height * dpr)) {
+      canvas.width = Math.round(r.width * dpr);
+      canvas.height = Math.round(r.height * dpr);
+      gl.viewport(0, 0, canvas.width, canvas.height);
+    }
+    fitW = A > r.height / r.width ? r.height / A : r.width;
+    const W = fitW * view.z, H = W * A;
+    let x = r.width / 2 - view.cx * W, y = r.height / 2 - view.cy * W;
+    // 사진이 화면보다 작으면 가운데, 크면 가장자리를 넘어가지 않게
+    x = W <= r.width ? (r.width - W) / 2 : Math.min(0, Math.max(r.width - W, x));
+    y = H <= r.height ? (r.height - H) / 2 : Math.min(0, Math.max(r.height - H, y));
+    view.cx = (r.width / 2 - x) / W; view.cy = (r.height / 2 - y) / W;
+    imgRect = { x, y, w: W, h: H };
+    $('#resetView').hidden = !viewChanged();
     gl.uniform2f(locO, -1 + (2 * imgRect.x) / r.width, 1 - (2 * imgRect.y) / r.height);
     gl.uniform2f(locS, (2 * imgRect.w) / r.width, (2 * imgRect.h) / r.height / A);
     placeRegions();
@@ -330,18 +362,69 @@
     if (!n) return;
     for (let k = 0; k < n; k++) { pos[k * 2] = restX[k] + dx[k]; pos[k * 2 + 1] = restY[k] + dy[k]; }
     gl.clear(gl.COLOR_BUFFER_BIT);
-    gl.bindBuffer(gl.ARRAY_BUFFER, posBuf);
-    gl.bufferSubData(gl.ARRAY_BUFFER, 0, pos);
-    gl.enableVertexAttribArray(locPos);
-    gl.vertexAttribPointer(locPos, 2, gl.FLOAT, false, 0, 0);
     gl.bindBuffer(gl.ARRAY_BUFFER, uvBuf);
     gl.enableVertexAttribArray(locUV);
     gl.vertexAttribPointer(locUV, 2, gl.FLOAT, false, 0, 0);
     gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, idxBuf);
-    gl.drawElements(gl.TRIANGLES, indexCount, gl.UNSIGNED_SHORT, 0);
+    const type = uintIndex ? gl.UNSIGNED_INT : gl.UNSIGNED_SHORT;
+    // 1패스: 변형된 사진
+    gl.disable(gl.BLEND);
+    gl.uniform1f(locUseMask, 0);
+    gl.bindBuffer(gl.ARRAY_BUFFER, posBuf);
+    gl.bufferSubData(gl.ARRAY_BUFFER, 0, pos);
+    gl.enableVertexAttribArray(locPos);
+    gl.vertexAttribPointer(locPos, 2, gl.FLOAT, false, 0, 0);
+    gl.drawElements(gl.TRIANGLES, indexCount, type, 0);
+    // 2패스: 보호할 얼굴을 원본 자리에 픽셀 단위로 덮는다
+    if (maskActive) {
+      gl.enable(gl.BLEND);
+      gl.uniform1f(locUseMask, 1);
+      gl.bindBuffer(gl.ARRAY_BUFFER, restBuf);
+      gl.vertexAttribPointer(locPos, 2, gl.FLOAT, false, 0, 0);
+      gl.drawElements(gl.TRIANGLES, indexCount, type, 0);
+      gl.disable(gl.BLEND);
+    }
+  }
+
+  // ---------- 픽셀 단위 얼굴 보호 마스크 ----------
+  // 잡힌 볼의 얼굴보다 앞에 있는(더 큰) 얼굴들의 윤곽 폴리곤을 캔버스에 칠해 텍스처로 올린다.
+  // 이 마스크가 있는 동안 2패스가 그 얼굴 픽셀을 원본 그대로 덮어 그린다.
+  let maskActive = false, maskKey = '';
+  const MASK_PX = 768;
+  function updateProtectMask() {
+    const grabbedFaces = new Set();
+    for (const g of grabs.values()) if (g.face !== undefined && g.face >= 0) grabbedFaces.add(g.face);
+    let minW = Infinity;
+    for (const o of faceOvals) if (grabbedFaces.has(o.id)) minW = Math.min(minW, o.W);
+    const front = grabbedFaces.size ? faceOvals.filter((o) => !grabbedFaces.has(o.id) && o.W > minW * 1.02 && o.poly) : [];
+    const key = front.map((o) => o.id).join(',');
+    if (!front.length) { if (!grabs.size) return; maskActive = false; maskKey = ''; return; } // 놓은 뒤엔 멈출 때까지 유지
+    if (key === maskKey && maskActive) return;
+    maskKey = key;
+    const c = document.createElement('canvas');
+    c.width = MASK_PX; c.height = Math.round(MASK_PX * A);
+    const g = c.getContext('2d');
+    const sx = MASK_PX, sy = MASK_PX / A; // 이미지 공간(가로 1, 세로 A) → 캔버스 픽셀
+    g.fillStyle = '#fff';
+    try { g.filter = 'blur(1.5px)'; } catch { /* 지원 안 하면 딱딱한 경계 */ }
+    for (const o of front) {
+      g.beginPath();
+      o.poly.forEach(([x, y], i) => { if (i) g.lineTo(x * sx, y * sy); else g.moveTo(x * sx, y * sy); });
+      g.closePath(); g.fill();
+    }
+    gl.activeTexture(gl.TEXTURE1);
+    gl.bindTexture(gl.TEXTURE_2D, maskTex);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, c);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+    gl.activeTexture(gl.TEXTURE0);
+    maskActive = true;
   }
 
   function uploadTexture() {
+    gl.activeTexture(gl.TEXTURE0);
     gl.bindTexture(gl.TEXTURE_2D, tex);
     gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
     gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, srcCanvas);
@@ -364,6 +447,7 @@
     regions = newRegions || defaultRegions();
     faceOvals = []; // 자동 인식이 끝나면 다시 채운다
     grabs.clear();
+    view.z = 1; view.cx = 0.5; view.cy = A / 2;
     uploadTexture();
     buildMesh();
     buildRegionEls();
@@ -444,6 +528,9 @@
   // 얼굴 메시 468점 중 볼 가운데를 둘러싼 점들. 평균을 볼 중심으로 쓴다. (사진 기준 왼쪽 / 오른쪽)
   const CHEEK_SETS = [[50, 187, 205], [280, 411, 425]];
   const FACE_EDGE = [234, 454];   // 얼굴 좌우 끝. 이 폭으로 볼 크기를 정한다.
+  // 얼굴 윤곽(턱선~이마)을 도는 랜드마크. 앞사람 얼굴을 픽셀 단위로 보호할 때 쓴다.
+  const FACE_OVAL = [10, 338, 297, 332, 284, 251, 389, 356, 454, 323, 361, 288, 397, 365, 379, 378, 400, 377, 152, 148, 176, 149, 150, 136, 172, 58, 132, 93, 234, 127, 162, 21, 54, 103, 67, 109];
+  const OVAL_GROW = 1.04;         // 윤곽을 살짝 키워 경계 픽셀까지 덮는다
   const CHEEK_R_RATIO = 0.19;     // 볼 원 반지름 = 얼굴 폭 × 이 값
   const MIN_FACE = 0.05;          // 사진 가로 대비 이보다 작은 얼굴(배경 속 행인 등)은 무시
 
@@ -494,7 +581,11 @@
         for (const i of set) { const p = P(i); x += p.x; y += p.y; }
         return { cx: x / set.length, cy: y / set.length, r };
       });
-      faces.push({ W, box, cheeks });
+      // 윤곽 폴리곤 (무게중심 기준으로 살짝 키움)
+      const pts = FACE_OVAL.map(P);
+      const gx = pts.reduce((a, q) => a + q.x, 0) / pts.length, gy = pts.reduce((a, q) => a + q.y, 0) / pts.length;
+      const poly = pts.map((q) => [gx + (q.x - gx) * OVAL_GROW, gy + (q.y - gy) * OVAL_GROW]);
+      faces.push({ W, box, cheeks, poly });
     }
     return faces.sort((p, q) => q.W - p.W);
   }
@@ -505,41 +596,12 @@
     faces.forEach((f, id) => {
       for (const c of f.cheeks) regs.push({ ...c, face: id, W: f.W });
       ovals.push({
-        id, W: f.W,
+        id, W: f.W, poly: f.poly,
         cx: (f.box.x0 + f.box.x1) / 2, cy: (f.box.y0 + f.box.y1) / 2,
         rx: ((f.box.x1 - f.box.x0) / 2) * 1.05, ry: ((f.box.y1 - f.box.y0) / 2) * 1.05,
       });
     });
     return { regs, ovals };
-  }
-
-  // 얼굴이 작게 찍힌 사진은 볼이 손가락보다 작아 잡기 어렵다. 얼굴 쪽을 잘라 크게 보여준다.
-  // 원본 파일은 건드리지 않고, 화면에 쓰는 텍스처만 다시 만든다.
-  const TARGET_FACE = 0.5;  // 확대 후 얼굴 폭이 화면 사진 가로의 이 비율이 되게
-  function cropToFaces(faces) {
-    const u = { x0: Infinity, y0: Infinity, x1: -Infinity, y1: -Infinity };
-    for (const f of faces) {
-      u.x0 = Math.min(u.x0, f.box.x0); u.y0 = Math.min(u.y0, f.box.y0);
-      u.x1 = Math.max(u.x1, f.box.x1); u.y1 = Math.max(u.y1, f.box.y1);
-    }
-    let w = Math.max((u.x1 - u.x0) * 1.35, faces[0].W / TARGET_FACE);
-    let h = w * 1.25; // 세로로 약간 긴 화면에 맞춘 4:5
-    if (w >= 0.9 || (w >= 1 && h >= A)) return null; // 거의 안 잘리면 그대로
-    w = Math.min(1, w); h = Math.min(A, h);
-    const cx = (u.x0 + u.x1) / 2, cy = (u.y0 + u.y1) / 2;
-    const x0 = Math.min(1 - w, Math.max(0, cx - w / 2));
-    const y0 = Math.min(A - h, Math.max(0, cy - h / 2));
-    const px = srcCanvas.width; // 이미지 공간 1 = 가로 픽셀 수
-    const c = document.createElement('canvas');
-    c.width = Math.round(w * px); c.height = Math.round(h * px);
-    c.getContext('2d').drawImage(srcCanvas, x0 * px, y0 * px, c.width, c.height, 0, 0, c.width, c.height);
-    const { regs, ovals } = regionsAndOvals(faces);
-    const T = (g) => ({ ...g, cx: (g.cx - x0) / w, cy: (g.cy - y0) / w });
-    return {
-      canvas: c,
-      regions: regs.map((g) => ({ ...T(g), r: g.r / w })),
-      ovals: ovals.map((o) => ({ ...T(o), rx: o.rx / w, ry: o.ry / w })),
-    };
   }
 
   let detecting = false, detectToken = 0;
@@ -554,12 +616,13 @@
     detecting = false;
     $('#busy').hidden = true;
     if (faces && faces.length) {
-      const crop = cropToFaces(faces);
-      if (crop) { setImage(crop.canvas, crop.canvas.width, crop.canvas.height, crop.regions); faceOvals = crop.ovals; }
-      else { const ro = regionsAndOvals(faces); regions = ro.regs; faceOvals = ro.ovals; }
+      const ro = regionsAndOvals(faces);
+      regions = ro.regs; faceOvals = ro.ovals;
       settle(); updateFree(); buildRegionEls();
       setEditing(false);
+      const small = faces[0].W < 0.35; // 얼굴이 작으면 확대 방법을 알려준다 (자동으로 확대하지 않는다)
       toast(faces.length > 1 ? `얼굴 ${faces.length}개를 찾았어요! 볼을 잡고 당겨보세요` : '볼을 찾았어요! 잡고 당겨보세요');
+      if (small) setTimeout(() => toast('두 손가락으로 벌리면 확대, 빈 곳을 끌면 이동돼요'), 2000);
     } else {
       setEditing(true);
       toast(faces ? '얼굴을 못 찾았어요. 원을 볼 위로 옮겨주세요' : '자동 인식을 못 했어요. 원을 볼 위로 옮겨주세요');
@@ -575,26 +638,66 @@
     };
   }
 
-  // ---------- 잡아당기기 입력 (여러 손가락 동시) ----------
+  // ---------- 입력: 잡아당기기(여러 손가락) / 사진 이동·확대 ----------
+  // 첫 손가락이 볼 위에 닿으면 "당기기" 모드(이후 손가락도 볼을 잡음),
+  // 빈 곳에 닿으면 "보기" 모드(한 손가락 이동, 두 손가락 확대). 편집 중에는 항상 보기 모드.
+  const nav = new Map(); // pointerId -> 스테이지 CSS 픽셀 좌표
+  function stagePt(e) { const r = stage.getBoundingClientRect(); return { x: e.clientX - r.left, y: e.clientY - r.top }; }
+
   canvas.addEventListener('pointerdown', (e) => {
-    if (editing || detecting) return;
+    if (detecting) return;
     stopDemo();
     const p = toImg(e.clientX, e.clientY);
-    if (!beginGrab(e.pointerId, p.x, p.y)) {
-      if (grabs.size === 0) toast('볼 부분을 잡아보세요 (위치는 "볼 위치"에서 조정)');
-      return;
-    }
+    if (!editing && nav.size === 0 && beginGrab(e.pointerId, p.x, p.y)) {
+      buzz(12);
+    } else if (grabs.size === 0) {
+      nav.set(e.pointerId, stagePt(e));
+    } else return;
     try { canvas.setPointerCapture(e.pointerId); } catch { /* 합성 이벤트 */ }
-    buzz(12);
     e.preventDefault();
   });
   canvas.addEventListener('pointermove', (e) => {
-    if (!grabs.has(e.pointerId)) return;
-    const p = toImg(e.clientX, e.clientY);
-    moveGrab(e.pointerId, p.x, p.y);
+    if (grabs.has(e.pointerId)) {
+      const p = toImg(e.clientX, e.clientY);
+      moveGrab(e.pointerId, p.x, p.y);
+      return;
+    }
+    if (!nav.has(e.pointerId)) return;
+    const cur = stagePt(e);
+    if (nav.size === 1) {
+      const prev = nav.get(e.pointerId);
+      view.cx -= (cur.x - prev.x) / imgRect.w;
+      view.cy -= (cur.y - prev.y) / imgRect.w;
+    } else {
+      const [idA, idB] = [...nav.keys()];
+      const oa = nav.get(idA), ob = nav.get(idB);
+      const na = e.pointerId === idA ? cur : oa, nb = e.pointerId === idB ? cur : ob;
+      const od = Math.hypot(oa.x - ob.x, oa.y - ob.y), nd = Math.hypot(na.x - nb.x, na.y - nb.y);
+      const om = { x: (oa.x + ob.x) / 2, y: (oa.y + ob.y) / 2 }, nm = { x: (na.x + nb.x) / 2, y: (na.y + nb.y) / 2 };
+      zoomAbout(om, nm, od > 1 ? nd / od : 1);
+    }
+    nav.set(e.pointerId, cur);
+    layout();
   });
+  // 스테이지 점 from 아래의 이미지 좌표가 배율을 바꾼 뒤 to 로 오게 한다
+  function zoomAbout(from, to, factor) {
+    const r = stage.getBoundingClientRect();
+    const px = (from.x - imgRect.x) / imgRect.w, py = (from.y - imgRect.y) / imgRect.w;
+    view.z = Math.min(ZOOM_MAX, Math.max(1, view.z * factor));
+    const W = fitW * view.z;
+    view.cx = px - (to.x - r.width / 2) / W;
+    view.cy = py - (to.y - r.height / 2) / W;
+  }
+  canvas.addEventListener('wheel', (e) => { // 데스크톱: 휠로 확대
+    e.preventDefault();
+    const p = stagePt(e);
+    zoomAbout(p, p, Math.exp(-e.deltaY * 0.002));
+    layout();
+  }, { passive: false });
+
   let releases = 0;
   const release = (e) => {
+    nav.delete(e.pointerId);
     if (!endGrab(e.pointerId)) return;
     buzz(8);
     releases++;
@@ -602,6 +705,7 @@
   };
   canvas.addEventListener('pointerup', release);
   canvas.addEventListener('pointercancel', release);
+  $('#resetView').addEventListener('click', resetView);
   canvas.addEventListener('contextmenu', (e) => e.preventDefault());
 
   // 안드로이드: navigator.vibrate. iOS 사파리는 vibrate가 없으므로 switch 체크박스 토글로 시스템 햅틱을 빌린다(iOS 18+, 강도 조절 불가).
@@ -813,7 +917,7 @@
       hideCoach();
       setTimeout(() => {
         if (coachStep !== 2) return;
-        showCoach('좋아요! 두 손가락으로 양볼을 동시에 당길 수도 있어요', [
+        showCoach('좋아요! 양볼을 두 손가락으로 동시에 당길 수도 있어요. 빈 곳을 끌면 사진이 움직이고, 두 손가락으로 벌리면 확대돼요', [
           { label: '내 사진으로 해보기', primary: true, onClick: () => { finishOnboarding(); pickPhoto(); } },
           { label: '계속 만지기', onClick: finishOnboarding },
         ]);
@@ -945,6 +1049,6 @@
   // 디버그/자동 검증용
   window.__cheek = {
     settings, grabs, detectFaces, beginGrab, moveGrab, endGrab, step, render, toImg,
-    get state() { return { n, cols, rows, A, dx, dy, vx, vy, free, owner, regions, faceOvals, imgRect, running, detecting, coachStep, editing, selected }; },
+    get state() { return { n, cols, rows, A, dx, dy, vx, vy, free, owner, regions, faceOvals, imgRect, view, running, detecting, coachStep, editing, selected, maskActive, uintIndex }; },
   };
 })();
