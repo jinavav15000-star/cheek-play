@@ -1,0 +1,24 @@
+# 빌드 없는 정적 사이트. 저장소 루트를 그대로 게시한다.
+[build]
+  publish = "."
+  command = ""
+
+# 얼굴 인식 파일(15MB)은 바뀌지 않으므로 오래 캐시한다. 갱신할 때는 파일 이름(버전)을 바꾼다.
+[[headers]]
+  for = "/vendor/*"
+  [headers.values]
+    Cache-Control = "public, max-age=31536000, immutable"
+
+# 앱 파일은 항상 최신을 확인하게 한다 (테스트 중 수정이 바로 반영되도록)
+[[headers]]
+  for = "/*.html"
+  [headers.values]
+    Cache-Control = "no-cache"
+[[headers]]
+  for = "/*.js"
+  [headers.values]
+    Cache-Control = "no-cache"
+[[headers]]
+  for = "/*.css"
+  [headers.values]
+    Cache-Control = "no-cache"
