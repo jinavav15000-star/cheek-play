@@ -160,7 +160,7 @@
     for (const o of faceOvals) {
       if (o.id === reg.face || o.W <= (reg.W || 0) * 1.02) continue; // 같은 얼굴이거나 뒤에 있는 얼굴이면 무시
       const e = Math.hypot((x - o.cx) / o.rx, (y - o.cy) / o.ry);
-      f *= smoothstep(0.9, 1.15, e); // 타원 안 0 → 경계 밖 1
+      f *= smoothstep(0.7, 1.2, e); // 타원 안 0 → 경계 밖 1. 띠를 넓게 잡아 정점 변위가 급하게 꺾이지 않게 한다(정확한 경계는 픽셀 마스크가 맡음)
       if (f === 0) break;
     }
     return f;
@@ -214,7 +214,9 @@
     }
     const w = new Float32Array(n);
     for (let k = 0; k < n; k++) {
-      if (!free[k] || (reg && owner[k] !== regIdx)) continue;
+      // 주인 볼과 상관없이 이 볼의 영향권(effMask) 안이면 전부 부드럽게 따라온다.
+      // 주인으로 걸러내면 두 사람 볼 영역이 겹치는 경계에서 한 칸씩 어긋난 톱니가 생긴다(실제로 겪음).
+      if (!free[k]) continue;
       const q = Math.hypot(restX[k] - x, restY[k] - y) / Rg;
       let g = q < 1 ? (1 - q * q) * (1 - q * q) : 0;
       if (reg) g *= effMask(reg, restX[k], restY[k]);
