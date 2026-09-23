@@ -549,9 +549,9 @@
   // 볼 위치는 detectFaces로 미리 계산해 두었다. 덕분에 첫 화면에서 인식 모델(15MB)을 내려받지 않는다.
   // 사진을 바꾸면 이 좌표도 다시 계산할 것 (브라우저 콘솔에서 __cheek.detectFaces).
   const SAMPLES = [
-    { src: 'samples/baby1.jpg', regions: [{ cx: 0.3516, cy: 0.7302, r: 0.1 }, { cx: 0.6851, cy: 0.6989, r: 0.1 }] },
-    { src: 'samples/baby2.jpg', regions: [{ cx: 0.3380, cy: 0.7270, r: 0.1 }, { cx: 0.6640, cy: 0.7574, r: 0.1 }] },
-    { src: 'samples/baby3.jpg', regions: [{ cx: 0.3451, cy: 0.6601, r: 0.1 }, { cx: 0.6823, cy: 0.6098, r: 0.1 }] },
+    { src: 'samples/baby1.jpg', regions: [{ cx: 0.3516, cy: 0.7302, r: 0.117 }, { cx: 0.6851, cy: 0.6989, r: 0.117 }] },
+    { src: 'samples/baby2.jpg', regions: [{ cx: 0.3380, cy: 0.7270, r: 0.117 }, { cx: 0.6640, cy: 0.7574, r: 0.117 }] },
+    { src: 'samples/baby3.jpg', regions: [{ cx: 0.3451, cy: 0.6601, r: 0.117 }, { cx: 0.6823, cy: 0.6098, r: 0.117 }] },
   ];
   async function loadSample(i) {
     const smp = SAMPLES[i];
@@ -589,7 +589,7 @@
   // 얼굴 윤곽(턱선~이마)을 도는 랜드마크. 앞사람 얼굴을 픽셀 단위로 보호할 때 쓴다.
   const FACE_OVAL = [10, 338, 297, 332, 284, 251, 389, 356, 454, 323, 361, 288, 397, 365, 379, 378, 400, 377, 152, 148, 176, 149, 150, 136, 172, 58, 132, 93, 234, 127, 162, 21, 54, 103, 67, 109];
   const OVAL_GROW = 1.04;         // 윤곽을 살짝 키워 경계 픽셀까지 덮는다
-  const CHEEK_R_RATIO = 0.19;     // 볼 원 반지름 = 얼굴 폭 × 이 값
+  const CHEEK_R_RATIO = 0.22;     // 볼 원 반지름 = 얼굴 폭 × 이 값 (0.19에서 '크게' 두 번(×1.08²) 만큼 키움, 사용자 요청)
   const MIN_FACE = 0.05;          // 사진 가로 대비 이보다 작은 얼굴(배경 속 행인 등)은 무시
 
   // 얼굴마다 { W: 얼굴 폭, box: 얼굴 경계 상자, cheeks: [볼 두 개] }. 큰 얼굴부터.
