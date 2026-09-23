@@ -85,11 +85,38 @@
       }
       return acc;
     }
+    // 빠른 쌍선형 보간 (반복 중간 단계용)
+    vec2 dispBilin(vec2 uv) {
+      vec2 g = uv * (uGrid - 1.0);
+      vec2 i0 = floor(g);
+      vec2 f = g - i0;
+      vec2 a = fetchDisp(clamp(i0, vec2(0.0), uGrid - 1.0));
+      vec2 b = fetchDisp(clamp(i0 + vec2(1.0, 0.0), vec2(0.0), uGrid - 1.0));
+      vec2 c = fetchDisp(clamp(i0 + vec2(0.0, 1.0), vec2(0.0), uGrid - 1.0));
+      vec2 d = fetchDisp(clamp(i0 + vec2(1.0, 1.0), vec2(0.0), uGrid - 1.0));
+      return mix(mix(a, b, f.x), mix(c, d, f.x), f.y);
+    }
+    // 원본 위치 r에서의 변위. 보호할 얼굴(앞사람) 안쪽이면 0.
+    float freeAt(vec2 uv) { return uUseMask > 0.5 ? 1.0 - texture2D(uMask, uv).a : 1.0; }
+    vec2 toUV(vec2 r) { return vec2(r.x, r.y / uA); }
+
     void main() {
-      vec2 d = dispAt(vUV);
-      if (uUseMask > 0.5) d *= 1.0 - texture2D(uMask, vUV).a;
-      vec2 src = vUV - vec2(d.x, d.y / uA);
-      gl_FragColor = texture2D(uTex, clamp(src, 0.0, 1.0));
+      // 물리는 "원본의 점 r이 r + d(r)로 간다"(전진). 화면 픽셀 p에는 r + d(r) = p 인 r의 색을 보여야 한다.
+      // 그 r을 고정점 반복 r ← p - d(r) 로 찾는다(3~4회면 수렴). 한 번만 계산하면 반대편(입 쪽) 내용이
+      // 볼 중심으로 끌려오는 엉뚱한 느낌이 난다(실제로 겪음).
+      vec2 p = vec2(vUV.x, vUV.y * uA);
+      vec2 r = p;
+      vec2 d = dispAt(vUV) * freeAt(vUV);
+      if (dot(d, d) < 1e-12) { gl_FragColor = texture2D(uTex, vUV); return; } // 안 움직이는 픽셀은 바로
+      // 감쇠(0.7)를 두면 당김의 안쪽(진동하는 쪽)에서도 안정적으로 수렴한다: 8회 후 오차 1.5px 이하(측정).
+      r = p - d;
+      for (int k = 0; k < 6; k++) {
+        d = dispBilin(toUV(r)) * freeAt(toUV(r));
+        r += 0.7 * (p - d - r);
+      }
+      d = dispAt(toUV(r)) * freeAt(toUV(r));
+      r += 0.7 * (p - d - r);
+      gl_FragColor = texture2D(uTex, clamp(toUV(r), 0.0, 1.0));
     }`;
 
   let prog, locPos, locUV, locO, locS, locUseMask, locGrid, locA, posBuf, uvBuf, tex, maskTex, dispTex;
