@@ -83,7 +83,7 @@
   }
 
   // ---------- 메시 + 물리 상태 ----------
-  const GRID_FINE = 144, GRID_COARSE = 96; // 긴 변 기준 격자 칸 수. 촘촘할수록 확대했을 때 계단이 안 보인다.
+  const GRID_FINE = 224, GRID_COARSE = 96; // 긴 변 기준 격자 칸 수. 촘촘할수록 늘어난 실루엣의 다각형 티가 안 난다.
   let A = 1;            // 이미지 세로/가로 비율
   let cols, rows, n, stride, indexCount;
   let restX, restY, dx, dy, vx, vy, tgtX, tgtY, held, free, owner, pos;
@@ -109,10 +109,16 @@
     }
     const idx = new (uintIndex ? Uint32Array : Uint16Array)(cols * rows * 6);
     let p = 0;
+    // 대각선 방향을 체크무늬로 번갈아 둔다. 한 방향으로만 자르면 늘어난 경계에 한쪽으로 쏠린 지그재그가 생긴다.
     for (let j = 0; j < rows; j++) for (let i = 0; i < cols; i++) {
       const a = j * stride + i, b = a + 1, c = a + stride, d = c + 1;
-      idx[p++] = a; idx[p++] = c; idx[p++] = b;
-      idx[p++] = b; idx[p++] = c; idx[p++] = d;
+      if ((i + j) & 1) {
+        idx[p++] = a; idx[p++] = c; idx[p++] = b;
+        idx[p++] = b; idx[p++] = c; idx[p++] = d;
+      } else {
+        idx[p++] = a; idx[p++] = c; idx[p++] = d;
+        idx[p++] = a; idx[p++] = d; idx[p++] = b;
+      }
     }
     indexCount = idx.length;
     gl.bindBuffer(gl.ARRAY_BUFFER, uvBuf);
