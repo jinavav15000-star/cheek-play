@@ -31,7 +31,15 @@ body {
 
 .top { padding: 10px 16px 8px; display: flex; align-items: baseline; gap: 12px; }
 .top h1 { margin: 0; font-size: 17px; font-weight: 800; letter-spacing: -0.02em; color: var(--accent); white-space: nowrap; }
-.hint { margin: 0; font-size: 13px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.top { align-items: center; }
+.hint { flex: 1; min-width: 0; margin: 0; font-size: 13px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.top-actions { display: flex; gap: 6px; flex: none; }
+.chip {
+  min-height: 32px; min-width: 32px; padding: 0 10px; border-radius: 999px;
+  border: 1px solid var(--line); background: var(--surface); color: var(--text);
+  font: inherit; font-size: 13px; font-weight: 700;
+}
+.chip:active { transform: scale(.95); }
 
 .stage { position: relative; flex: 1; min-height: 0; }
 #gl { position: absolute; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; }
@@ -99,7 +107,7 @@ body {
   max-height: 44dvh; overflow-y: auto;
 }
 .sheet > * { flex: none; }
-.sheet[hidden], .edit-bar[hidden], .toast[hidden] { display: none; }
+.sheet[hidden], .edit-bar[hidden], .toast[hidden], .coach[hidden], .busy[hidden], .finger[hidden] { display: none; }
 .sheet-head { display: flex; justify-content: space-between; align-items: center; font-size: 16px; }
 .sheet label { display: flex; flex-direction: column; gap: 6px; font-size: 14px; color: var(--muted); }
 .sheet label output { color: var(--text); font-variant-numeric: tabular-nums; margin-left: 6px; }
@@ -112,3 +120,40 @@ body {
 
 /* display:none 이면 햅틱이 안 울리므로 화면 밖으로만 치운다 */
 .ios-haptic { position: fixed; left: -9999px; top: 0; width: 1px; height: 1px; overflow: hidden; opacity: 0; pointer-events: none; }
+
+/* 첫 사용 안내: 시범 손가락 */
+.finger {
+  position: absolute; left: 0; top: 0; width: 44px; height: 44px; margin: -22px 0 0 -22px;
+  border-radius: 50%; background: rgba(255, 255, 255, .55); border: 3px solid #fff;
+  box-shadow: 0 2px 10px rgba(0,0,0,.35); pointer-events: none;
+  transition: opacity .25s, scale .2s;
+}
+.finger.down { scale: .8; background: rgba(255, 158, 136, .75); }
+.finger.up { opacity: 0; }
+
+.busy {
+  position: absolute; left: 50%; top: 14px; transform: translateX(-50%);
+  display: flex; align-items: center; gap: 8px;
+  padding: 8px 14px; border-radius: 999px; font-size: 13px;
+  background: rgba(0,0,0,.72); color: #fff; pointer-events: none; white-space: nowrap;
+}
+.spin {
+  width: 14px; height: 14px; border-radius: 50%;
+  border: 2px solid rgba(255,255,255,.3); border-top-color: #fff;
+  animation: spin .8s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* 안내 카드: 사진 아래쪽에 떠 있고, 카드 밖은 터치가 그대로 사진에 간다 */
+.coach {
+  position: absolute; left: 12px; right: 12px; bottom: 12px;
+  padding: 14px; border-radius: 16px;
+  background: rgba(38, 29, 25, .94); border: 1px solid var(--line);
+  box-shadow: 0 8px 30px rgba(0,0,0,.45);
+  animation: rise .25s ease-out;
+}
+.coach p { margin: 0; font-size: 15px; font-weight: 700; line-height: 1.4; text-align: center; }
+.coach-btns { display: flex; gap: 8px; margin-top: 12px; }
+.coach-btns:empty { display: none; }
+.coach-btns .btn { min-height: 42px; font-size: 14px; }
+@keyframes rise { from { opacity: 0; transform: translateY(8px); } }

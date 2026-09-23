@@ -11,6 +11,10 @@
 <header class="top">
   <h1>볼 꼬집기</h1>
   <p id="hint" class="hint">볼을 누른 채로 당겼다가 놓아보세요</p>
+  <div class="top-actions">
+    <button id="btnHelp" class="chip" aria-label="사용법 다시 보기">?</button>
+    <button id="btnFeedback" class="chip">의견 보내기</button>
+  </div>
 </header>
 
 <main id="stage" class="stage">
@@ -19,6 +23,12 @@
   <div id="editBar" class="edit-bar" hidden>
     <span>원을 볼 위로 옮기고, 모서리 점을 끌어 크기를 맞추세요</span>
     <button id="editDone" class="btn primary">완료</button>
+  </div>
+  <div id="finger" class="finger" hidden></div>
+  <div id="busy" class="busy" hidden><i class="spin"></i><span>볼 찾는 중…</span></div>
+  <div id="coach" class="coach" hidden>
+    <p id="coachText"></p>
+    <div id="coachBtns" class="coach-btns"></div>
   </div>
   <div id="toast" class="toast" hidden></div>
 </main>
@@ -51,7 +61,7 @@
   <label class="check"><input id="cShow" type="checkbox"> 볼 영역 항상 표시</label>
   <label class="check"><input id="cHaptic" type="checkbox"> 진동 피드백</label>
   <button id="btnReset" class="btn small">기본값으로</button>
-  <p class="note">사진은 이 기기 안에서만 처리되고 어디에도 업로드되지 않습니다.</p>
+  <p class="note">사진과 얼굴 인식은 모두 이 기기 안에서만 처리되고 어디에도 업로드되지 않습니다.</p>
 </section>
 
 <!-- iOS 사파리(18+)용 햅틱 우회: 스위치형 체크박스를 토글하면 시스템 햅틱이 울린다. 화면에는 보이지 않는다. -->

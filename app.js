@@ -12,6 +12,10 @@
   const toastEl = $('#toast');
 
   // ---------- 설정 ----------
+  // 의견 보내기 버튼이 여는 주소(구글 폼 등). 비어 있으면 "준비 중" 안내만 뜬다.
+  const FEEDBACK_URL = '';
+  const NUDGE_AFTER = 30; // 이만큼 당기고 놓으면 한 번 의견을 부탁한다
+
   const DEFAULTS = { freq: 4, wobble: 0.75, stretch: 0.6, grab: 1.0, mask: true, show: false, haptic: true };
   const settings = { ...DEFAULTS, ...loadJSON('cheek.settings') };
 
@@ -21,6 +25,8 @@
   function saveJSON(key, v) {
     try { localStorage.setItem(key, JSON.stringify(v)); } catch { /* 사생활 보호 모드 등 */ }
   }
+  function flag(key) { try { return localStorage.getItem(key) === '1'; } catch { return false; } }
+  function setFlag(key) { try { localStorage.setItem(key, '1'); } catch { /* 무시 */ } }
 
   // ---------- WebGL ----------
   const gl = canvas.getContext('webgl', { antialias: true, alpha: false, preserveDrawingBuffer: false });
@@ -119,6 +125,7 @@
   // 영역 반지름 대비 비율. 원 안쪽은 100% 움직이고, 원 밖 주변 피부는 점점 줄어 MASK_OUTER에서 완전히 고정된다.
   const MASK_INNER = 0.7, MASK_OUTER = 1.5;
   const GRAB_HIT = 1.1;  // 원의 이 배율 안을 눌러야 잡힌다
+  const MIN_HIT_PX = 28; // 단, 화면에서 손가락 크기만큼은 항상 잡힌다
   const GRAB_BASE = 1.3; // 잡는 범위(반지름) = 원 반지름 × 이 값 × 설정값
   function smoothstep(e0, e1, x) {
     const t = Math.min(1, Math.max(0, (x - e0) / (e1 - e0)));
@@ -155,7 +162,7 @@
       let best = Infinity;
       for (const r of regions) {
         const d = Math.hypot(x - r.cx, y - r.cy);
-        if (d < r.r * GRAB_HIT && d < best) { best = d; reg = r; }
+        if (d < Math.max(r.r * GRAB_HIT, MIN_HIT_PX / imgRect.w) && d < best) { best = d; reg = r; }
       }
       if (!reg) return false;
       Rg = reg.r * GRAB_BASE * settings.grab;
@@ -354,10 +361,138 @@
       }
       setImage(drawable, sw, sh, null);
       if (drawable.close) drawable.close();
-      setEditing(true);
     } catch (e) {
       console.error(e);
       toast('이 사진 형식은 열 수 없어요 (JPG/PNG로 시도해 보세요)');
+      return;
+    }
+    await autoPlaceCheeks();
+  }
+
+  // ---------- 자동 볼 인식 (MediaPipe Face Landmarker, 기기 안에서만 실행) ----------
+  // 모델과 wasm은 vendor/mediapipe에 자체 호스팅한다. 외부 CDN이나 서버로 사진이 나가지 않는다.
+  const MP = './vendor/mediapipe/';
+  let landmarkerP = null;
+  function getLandmarker() {
+    if (!landmarkerP) {
+      landmarkerP = (async () => {
+        const { FaceLandmarker } = await import(MP + 'vision_bundle.mjs');
+        return FaceLandmarker.createFromOptions(
+          { wasmLoaderPath: MP + 'vision_wasm_internal.js', wasmBinaryPath: MP + 'vision_wasm_internal.wasm' },
+          {
+            baseOptions: { modelAssetPath: MP + 'face_landmarker.task', delegate: 'CPU' },
+            runningMode: 'IMAGE',
+            numFaces: 4,
+          },
+        );
+      })();
+      landmarkerP.catch(() => { landmarkerP = null; }); // 실패하면 다음에 다시 시도
+    }
+    return landmarkerP;
+  }
+
+  // 얼굴 메시 468점 중 볼 가운데를 둘러싼 점들. 평균을 볼 중심으로 쓴다. (사진 기준 왼쪽 / 오른쪽)
+  const CHEEK_SETS = [[50, 187, 205], [280, 411, 425]];
+  const FACE_EDGE = [234, 454];   // 얼굴 좌우 끝. 이 폭으로 볼 크기를 정한다.
+  const CHEEK_R_RATIO = 0.19;     // 볼 원 반지름 = 얼굴 폭 × 이 값
+  const MIN_FACE = 0.05;          // 사진 가로 대비 이보다 작은 얼굴(배경 속 행인 등)은 무시
+
+  // 얼굴마다 { W: 얼굴 폭, box: 얼굴 경계 상자, cheeks: [볼 두 개] }. 큰 얼굴부터.
+  // 인식기는 가까이서 찍은 큰 얼굴용이라 단체 사진의 작은 얼굴을 놓친다.
+  // 그래서 전체에서 찾은 얼굴이 작거나 없으면, 사진을 겹치는 3×3 조각으로 나눠 한 번 더 찾는다.
+  const TILE_IF_FACE_UNDER = 0.35;
+  async function detectFaces(source) {
+    const lm = await getLandmarker();
+    let faces = facesFrom(lm.detect(source), 0, 0, 1, A);
+    if (!faces.length || faces[0].W < TILE_IF_FACE_UNDER) {
+      const px = source.width, tw = 0.5, th = 0.5 * A;
+      const c = document.createElement('canvas');
+      c.width = Math.round(tw * px); c.height = Math.round(th * px);
+      const g = c.getContext('2d');
+      for (let j = 0; j < 3; j++) for (let i = 0; i < 3; i++) {
+        const x0 = i * 0.25, y0 = j * 0.25 * A;
+        g.drawImage(source, x0 * px, y0 * px, c.width, c.height, 0, 0, c.width, c.height);
+        for (const f of facesFrom(lm.detect(c), x0, y0, tw, th)) {
+          // 이미 찾은 얼굴과 겹치면 버린다
+          const cx = (f.box.x0 + f.box.x1) / 2, cy = (f.box.y0 + f.box.y1) / 2;
+          const dup = faces.some((e) => Math.hypot((e.box.x0 + e.box.x1) / 2 - cx, (e.box.y0 + e.box.y1) / 2 - cy) < Math.max(e.W, f.W) * 0.5);
+          if (!dup) faces.push(f);
+        }
+      }
+      faces.sort((p, q) => q.W - p.W);
+    }
+    return faces.slice(0, 6);
+  }
+
+  // 인식 결과(조각 기준 정규화 좌표)를 이미지 공간으로 옮긴다. 조각은 (x0, y0)에서 가로 tw, 세로 th.
+  function facesFrom(res, x0, y0, tw, th) {
+    const faces = [];
+    for (const f of res.faceLandmarks || []) {
+      const P = (i) => ({ x: x0 + f[i].x * tw, y: y0 + f[i].y * th });
+      const a = P(FACE_EDGE[0]), b = P(FACE_EDGE[1]);
+      const W = Math.hypot(a.x - b.x, a.y - b.y);
+      if (W < MIN_FACE) continue;
+      const box = { x0: Infinity, y0: Infinity, x1: -Infinity, y1: -Infinity };
+      for (let i = 0; i < f.length; i++) {
+        const p = P(i);
+        box.x0 = Math.min(box.x0, p.x); box.x1 = Math.max(box.x1, p.x);
+        box.y0 = Math.min(box.y0, p.y); box.y1 = Math.max(box.y1, p.y);
+      }
+      const r = Math.min(0.45, Math.max(0.02, W * CHEEK_R_RATIO));
+      const cheeks = CHEEK_SETS.map((set) => {
+        let x = 0, y = 0;
+        for (const i of set) { const p = P(i); x += p.x; y += p.y; }
+        return { cx: x / set.length, cy: y / set.length, r };
+      });
+      faces.push({ W, box, cheeks });
+    }
+    return faces.sort((p, q) => q.W - p.W);
+  }
+
+  // 얼굴이 작게 찍힌 사진은 볼이 손가락보다 작아 잡기 어렵다. 얼굴 쪽을 잘라 크게 보여준다.
+  // 원본 파일은 건드리지 않고, 화면에 쓰는 텍스처만 다시 만든다.
+  const TARGET_FACE = 0.5;  // 확대 후 얼굴 폭이 화면 사진 가로의 이 비율이 되게
+  function cropToFaces(faces) {
+    const u = { x0: Infinity, y0: Infinity, x1: -Infinity, y1: -Infinity };
+    for (const f of faces) {
+      u.x0 = Math.min(u.x0, f.box.x0); u.y0 = Math.min(u.y0, f.box.y0);
+      u.x1 = Math.max(u.x1, f.box.x1); u.y1 = Math.max(u.y1, f.box.y1);
+    }
+    let w = Math.max((u.x1 - u.x0) * 1.35, faces[0].W / TARGET_FACE);
+    let h = w * 1.25; // 세로로 약간 긴 화면에 맞춘 4:5
+    if (w >= 0.9 || (w >= 1 && h >= A)) return null; // 거의 안 잘리면 그대로
+    w = Math.min(1, w); h = Math.min(A, h);
+    const cx = (u.x0 + u.x1) / 2, cy = (u.y0 + u.y1) / 2;
+    const x0 = Math.min(1 - w, Math.max(0, cx - w / 2));
+    const y0 = Math.min(A - h, Math.max(0, cy - h / 2));
+    const px = srcCanvas.width; // 이미지 공간 1 = 가로 픽셀 수
+    const c = document.createElement('canvas');
+    c.width = Math.round(w * px); c.height = Math.round(h * px);
+    c.getContext('2d').drawImage(srcCanvas, x0 * px, y0 * px, c.width, c.height, 0, 0, c.width, c.height);
+    const regs = faces.flatMap((f) => f.cheeks).map((g) => ({ cx: (g.cx - x0) / w, cy: (g.cy - y0) / w, r: g.r / w }));
+    return { canvas: c, regions: regs };
+  }
+
+  let detecting = false, detectToken = 0;
+  async function autoPlaceCheeks() {
+    const token = ++detectToken;
+    detecting = true;
+    $('#busy').hidden = false;
+    hintEl.textContent = '볼 찾는 중…';
+    let faces = null;
+    try { faces = await detectFaces(srcCanvas); } catch (e) { console.error(e); }
+    if (token !== detectToken) return; // 그 사이 다른 사진을 불러왔다
+    detecting = false;
+    $('#busy').hidden = true;
+    if (faces && faces.length) {
+      const crop = cropToFaces(faces);
+      if (crop) setImage(crop.canvas, crop.canvas.width, crop.canvas.height, crop.regions);
+      else { regions = faces.flatMap((f) => f.cheeks); settle(); updateFree(); buildRegionEls(); }
+      setEditing(false);
+      toast(faces.length > 1 ? `얼굴 ${faces.length}개를 찾았어요! 볼을 잡고 당겨보세요` : '볼을 찾았어요! 잡고 당겨보세요');
+    } else {
+      setEditing(true);
+      toast(faces ? '얼굴을 못 찾았어요. 원을 볼 위로 옮겨주세요' : '자동 인식을 못 했어요. 원을 볼 위로 옮겨주세요');
     }
   }
 
@@ -405,7 +540,8 @@
 
   // ---------- 잡아당기기 입력 (여러 손가락 동시) ----------
   canvas.addEventListener('pointerdown', (e) => {
-    if (editing) return;
+    if (editing || detecting) return;
+    stopDemo();
     const p = toImg(e.clientX, e.clientY);
     if (!beginGrab(e.pointerId, p.x, p.y)) {
       if (grabs.size === 0) toast('볼 부분을 잡아보세요 (위치는 "볼 위치"에서 조정)');
@@ -420,7 +556,13 @@
     const p = toImg(e.clientX, e.clientY);
     moveGrab(e.pointerId, p.x, p.y);
   });
-  const release = (e) => { if (endGrab(e.pointerId)) buzz(8); };
+  let releases = 0;
+  const release = (e) => {
+    if (!endGrab(e.pointerId)) return;
+    buzz(8);
+    releases++;
+    onUserRelease();
+  };
   canvas.addEventListener('pointerup', release);
   canvas.addEventListener('pointercancel', release);
   canvas.addEventListener('contextmenu', (e) => e.preventDefault());
@@ -484,7 +626,7 @@
 
   function setEditing(on) {
     editing = on;
-    if (on) { clearGrabs(); settle(); render(); }
+    if (on) { finishOnboarding(); clearGrabs(); settle(); render(); }
     else { updateFree(); }
     $('#editBar').hidden = !on;
     regionsEl.classList.toggle('editing', on);
@@ -500,10 +642,134 @@
     toastTimer = setTimeout(() => { toastEl.hidden = true; }, 1800);
   }
 
-  $('#btnPhoto').addEventListener('click', () => $('#file').click());
+  function pickPhoto() {
+    getLandmarker().catch(() => { /* 사진 고르는 동안 모델을 미리 받는다. 실패는 인식 단계에서 처리 */ });
+    $('#file').click();
+  }
+  $('#btnPhoto').addEventListener('click', () => { finishOnboarding(); pickPhoto(); });
+  $('#btnHelp').addEventListener('click', () => {
+    if (editing) setEditing(false);
+    $('#sheet').hidden = true;
+    startOnboarding();
+  });
+  $('#btnFeedback').addEventListener('click', () => { hideCoach(); openFeedback(); });
+
+  function openFeedback() {
+    if (!FEEDBACK_URL) { toast('의견 링크가 아직 준비되지 않았어요'); return; }
+    window.open(FEEDBACK_URL, '_blank', 'noopener');
+  }
+
+  // ---------- 안내 카드 ----------
+  const coachEl = $('#coach');
+  function showCoach(text, buttons) {
+    $('#coachText').textContent = text;
+    const box = $('#coachBtns');
+    box.innerHTML = '';
+    for (const b of buttons) {
+      const el = document.createElement('button');
+      el.className = 'btn' + (b.primary ? ' primary' : '');
+      el.textContent = b.label;
+      el.addEventListener('click', b.onClick);
+      box.appendChild(el);
+    }
+    coachEl.hidden = false;
+  }
+  function hideCoach() { coachEl.hidden = true; }
+
+  // ---------- 첫 사용 안내 ----------
+  // 1단계: 시범 손가락이 볼을 당겼다 놓는 걸 반복해서 보여준다 → 사용자가 직접 한 번 당겼다 놓으면
+  // 2단계: 양볼 동시 당기기와 내 사진 넣기를 알려준다.
+  let coachStep = 0;
+  function startOnboarding() {
+    coachStep = 1;
+    showCoach('볼을 꾹 잡고 당겼다가 놓아보세요', []);
+    startDemo();
+  }
+  function finishOnboarding() {
+    if (!coachStep) return;
+    coachStep = 0;
+    hideCoach(); stopDemo();
+    setFlag('cheek.onboarded');
+  }
+  function onUserRelease() {
+    if (coachStep === 1) {
+      coachStep = 2;
+      hideCoach();
+      setTimeout(() => {
+        if (coachStep !== 2) return;
+        showCoach('좋아요! 두 손가락으로 양볼을 동시에 당길 수도 있어요', [
+          { label: '내 사진으로 해보기', primary: true, onClick: () => { finishOnboarding(); pickPhoto(); } },
+          { label: '계속 만지기', onClick: finishOnboarding },
+        ]);
+      }, 900);
+      return;
+    }
+    if (!coachStep && FEEDBACK_URL && releases >= NUDGE_AFTER && !flag('cheek.nudged')) {
+      setFlag('cheek.nudged');
+      showCoach('재밌게 만지셨나요? 1분이면 끝나는 의견을 남겨주시면 큰 도움이 돼요', [
+        { label: '의견 보내기', primary: true, onClick: () => { hideCoach(); openFeedback(); } },
+        { label: '나중에', onClick: hideCoach },
+      ]);
+    }
+  }
+
+  // 시범 손가락: 가짜 포인터(id -1)로 실제 물리를 그대로 돌린다
+  const fingerEl = $('#finger');
+  const DEMO_ID = -1;
+  let demo = null;
+  function showFinger(x, y, down) {
+    fingerEl.hidden = false;
+    fingerEl.style.left = imgRect.x + x * imgRect.w + 'px';
+    fingerEl.style.top = imgRect.y + y * imgRect.w + 'px';
+    fingerEl.classList.toggle('down', down);
+    fingerEl.classList.toggle('up', !down);
+  }
+  function startDemo() {
+    stopDemo();
+    const reg = regions[0];
+    if (!reg) return;
+    const d = { alive: true, timer: 0 };
+    demo = d;
+    const cycle = () => {
+      if (!d.alive) return;
+      const sx = reg.cx, sy = reg.cy;
+      const tx = sx - reg.r * 0.9, ty = sy + reg.r * 0.35;
+      showFinger(sx, sy, false);
+      d.timer = setTimeout(() => {
+        if (!d.alive || !beginGrab(DEMO_ID, sx, sy)) return;
+        showFinger(sx, sy, true);
+        const t0 = performance.now();
+        const pull = (t) => {
+          if (!d.alive) return;
+          const u = Math.min(1, (t - t0) / 650);
+          const ease = 1 - Math.pow(1 - u, 3);
+          const x = sx + (tx - sx) * ease, y = sy + (ty - sy) * ease;
+          moveGrab(DEMO_ID, x, y);
+          showFinger(x, y, true);
+          if (u < 1) { requestAnimationFrame(pull); return; }
+          d.timer = setTimeout(() => {
+            if (!d.alive) return;
+            endGrab(DEMO_ID);
+            showFinger(x, y, false);
+            d.timer = setTimeout(cycle, 1700);
+          }, 350);
+        };
+        requestAnimationFrame(pull);
+      }, 350);
+    };
+    d.timer = setTimeout(cycle, 500);
+  }
+  function stopDemo() {
+    if (!demo) return;
+    demo.alive = false;
+    clearTimeout(demo.timer);
+    demo = null;
+    endGrab(DEMO_ID);
+    fingerEl.hidden = true;
+  }
   $('#file').addEventListener('change', (e) => {
     const f = e.target.files && e.target.files[0];
-    if (f) loadFile(f);
+    if (f) { stopDemo(); loadFile(f); }
     e.target.value = '';
   });
   $('#btnEdit').addEventListener('click', () => setEditing(!editing));
@@ -561,10 +827,11 @@
   ]);
   setEditing(false);
   new ResizeObserver(layout).observe(stage);
+  if (!flag('cheek.onboarded')) startOnboarding();
 
   // 디버그/자동 검증용
   window.__cheek = {
-    settings, grabs, beginGrab, moveGrab, endGrab, step, render, toImg,
-    get state() { return { n, cols, rows, A, dx, dy, vx, vy, free, regions, imgRect, running }; },
+    settings, grabs, detectFaces, beginGrab, moveGrab, endGrab, step, render, toImg,
+    get state() { return { n, cols, rows, A, dx, dy, vx, vy, free, regions, imgRect, running, detecting, coachStep }; },
   };
 })();
