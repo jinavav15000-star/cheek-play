@@ -65,19 +65,12 @@ body {
   box-shadow: 0 2px 6px rgba(0,0,0,.5);
   touch-action: none;
 }
-.editing .region { display: block; pointer-events: auto; cursor: grab; }
+.editing .region { display: block; pointer-events: auto; cursor: grab; opacity: .7; }
+.editing .region.selected { opacity: 1; border-style: solid; border-width: 3px; background: rgba(255, 158, 136, 0.22); }
+.editing .region:not(.selected) .handle { display: none; }
 .ghost .region { display: block; border-width: 1px; background: transparent; opacity: .55; }
 .ghost .region .tag, .ghost .region .handle { display: none; }
 
-.edit-bar {
-  position: absolute; left: 12px; right: 12px; top: 10px;
-  display: flex; align-items: center; gap: 10px;
-  padding: 10px 10px 10px 14px; border-radius: 14px;
-  background: rgba(38, 29, 25, .92); border: 1px solid var(--line);
-  font-size: 13px; line-height: 1.35;
-}
-.edit-bar span { flex: 1; }
-.edit-bar .btn { flex: none; min-height: 40px; padding: 0 18px; }
 
 .toast {
   position: absolute; left: 50%; bottom: 14px; transform: translateX(-50%);
@@ -107,7 +100,7 @@ body {
   max-height: 44dvh; overflow-y: auto;
 }
 .sheet > * { flex: none; }
-.pick[hidden], .sheet[hidden], .edit-bar[hidden], .toast[hidden], .coach[hidden], .busy[hidden], .finger[hidden] { display: none; }
+.pick[hidden], .sheet[hidden], .edit-panel[hidden], .toast[hidden], .coach[hidden], .busy[hidden], .finger[hidden] { display: none; }
 .sheet-head { display: flex; justify-content: space-between; align-items: center; font-size: 16px; }
 .sheet label { display: flex; flex-direction: column; gap: 6px; font-size: 14px; color: var(--muted); }
 .sheet label output { color: var(--text); font-variant-numeric: tabular-nums; margin-left: 6px; }
@@ -160,3 +153,25 @@ body {
 
 .offscreen { position: fixed; left: -9999px; top: 0; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
 .btn.tall { min-height: 54px; font-size: 16px; }
+
+/* 볼 위치 편집 패널 */
+.tabs { display: flex; gap: 6px; overflow-x: auto; flex: 1; min-width: 0; }
+.tabs .chip { flex: none; }
+.tabs .chip.on { background: var(--accent); color: var(--accent-ink); border-color: transparent; }
+.edit-grid { display: grid; grid-template-columns: 132px 1fr; gap: 14px; align-items: center; }
+.dpad {
+  display: grid; grid-template-columns: repeat(3, 40px); grid-template-rows: repeat(3, 40px); gap: 4px;
+  justify-content: center;
+}
+.dbtn {
+  border-radius: 12px; border: 1px solid var(--line); background: var(--bg); color: var(--text);
+  font: inherit; font-size: 18px; font-weight: 700; touch-action: none; user-select: none; -webkit-user-select: none;
+}
+.dbtn:active { background: var(--accent); color: var(--accent-ink); }
+.dbtn[data-dy="-1"] { grid-column: 2; grid-row: 1; }
+.dbtn[data-dx="-1"] { grid-column: 1; grid-row: 2; }
+.dbtn[data-dx="1"]  { grid-column: 3; grid-row: 2; }
+.dbtn[data-dy="1"]  { grid-column: 2; grid-row: 3; }
+.size-box { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.size-btns { display: flex; gap: 8px; }
+.size-btns .btn { flex: 1; }

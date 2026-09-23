@@ -579,17 +579,20 @@
   // ---------- 볼 영역 편집 ----------
   let editing = false;
 
+  let selected = 0; // 편집 중인 볼 번호
   function buildRegionEls() {
     regionsEl.innerHTML = '';
+    selected = Math.min(selected, Math.max(0, regions.length - 1));
     regions.forEach((reg, i) => {
       const el = document.createElement('div');
-      el.className = 'region';
+      el.className = 'region' + (i === selected ? ' selected' : '');
       el.innerHTML = `<span class="tag">볼 ${i + 1}</span><i class="handle"></i>`;
       regionsEl.appendChild(el);
 
       let mode = null, offX = 0, offY = 0;
       el.addEventListener('pointerdown', (e) => {
         if (!editing) return;
+        selectRegion(i);
         mode = e.target.classList.contains('handle') ? 'resize' : 'move';
         const p = toImg(e.clientX, e.clientY);
         offX = p.x - reg.cx; offY = p.y - reg.cy;
@@ -603,9 +606,9 @@
           reg.cx = Math.min(1, Math.max(0, p.x - offX));
           reg.cy = Math.min(A, Math.max(0, p.y - offY));
         } else {
-          reg.r = Math.min(0.45, Math.max(0.04, Math.hypot(p.x - reg.cx, p.y - reg.cy)));
+          reg.r = Math.min(0.45, Math.max(0.03, Math.hypot(p.x - reg.cx, p.y - reg.cy)));
         }
-        placeRegions();
+        placeRegions(); syncEditPanel();
       });
       const up = () => { mode = null; };
       el.addEventListener('pointerup', up);
@@ -625,14 +628,67 @@
     });
   }
 
+  // ---------- 볼 위치 편집 패널 (탭 · 방향 버튼 · 크기 슬라이더) ----------
+  const NUDGE = 0.01; // 한 번 누를 때 이동량 (사진 가로의 1%)
+  function selectRegion(i) {
+    selected = i;
+    [...regionsEl.children].forEach((el, k) => el.classList.toggle('selected', k === i));
+    syncEditPanel();
+  }
+  function syncEditPanel() {
+    const tabs = $('#regionTabs');
+    if (tabs.children.length !== regions.length) {
+      tabs.innerHTML = '';
+      regions.forEach((_, i) => {
+        const b = document.createElement('button');
+        b.className = 'chip'; b.textContent = `볼 ${i + 1}`;
+        b.addEventListener('click', () => selectRegion(i));
+        tabs.appendChild(b);
+      });
+    }
+    [...tabs.children].forEach((b, i) => b.classList.toggle('on', i === selected));
+    const reg = regions[selected];
+    if (!reg) return;
+    $('#sSize').value = reg.r;
+    $('#oSize').textContent = Math.round(reg.r * imgRect.w) + 'px';
+  }
+  function nudge(dx, dy) {
+    const reg = regions[selected]; if (!reg) return;
+    reg.cx = Math.min(1, Math.max(0, reg.cx + dx * NUDGE));
+    reg.cy = Math.min(A, Math.max(0, reg.cy + dy * NUDGE));
+    placeRegions();
+  }
+  function setSize(r) {
+    const reg = regions[selected]; if (!reg) return;
+    reg.r = Math.min(0.45, Math.max(0.03, r));
+    placeRegions(); syncEditPanel();
+  }
+  // 방향 버튼: 누르면 한 칸, 길게 누르면 계속
+  for (const b of document.querySelectorAll('.dbtn')) {
+    const dx = +b.dataset.dx, dy = +b.dataset.dy;
+    let hold = 0, rep = 0;
+    const stop = () => { clearTimeout(hold); clearInterval(rep); hold = rep = 0; };
+    b.addEventListener('pointerdown', (e) => {
+      e.preventDefault();
+      nudge(dx, dy);
+      hold = setTimeout(() => { rep = setInterval(() => nudge(dx, dy), 60); }, 350);
+    });
+    for (const t of ['pointerup', 'pointercancel', 'pointerleave']) b.addEventListener(t, stop);
+  }
+  $('#sSize').addEventListener('input', (e) => setSize(parseFloat(e.target.value)));
+  $('#sizeDown').addEventListener('click', () => setSize(regions[selected].r * 0.92));
+  $('#sizeUp').addEventListener('click', () => setSize(regions[selected].r * 1.08));
+
   function setEditing(on) {
     editing = on;
-    if (on) { finishOnboarding(); clearGrabs(); settle(); render(); }
+    if (on) { finishOnboarding(); clearGrabs(); settle(); render(); $('#sheet').hidden = true; $('#pick').hidden = true; }
     else { updateFree(); }
-    $('#editBar').hidden = !on;
+    $('#editPanel').hidden = !on;
+    if (on) { selectRegion(Math.min(selected, regions.length - 1)); }
     regionsEl.classList.toggle('editing', on);
     regionsEl.classList.toggle('ghost', !on && settings.show);
     hintEl.textContent = on ? '볼 위치를 맞추는 중' : '볼을 누른 채로 당겼다가 놓아보세요';
+    layout(); // 패널이 열리고 닫히면 사진 크기가 바뀐다
   }
 
   // ---------- UI ----------
@@ -789,7 +845,7 @@
   }
   $('#btnEdit').addEventListener('click', () => setEditing(!editing));
   $('#editDone').addEventListener('click', () => setEditing(false));
-  $('#btnFeel').addEventListener('click', () => { $('#pick').hidden = true; $('#sheet').hidden = !$('#sheet').hidden; });
+  $('#btnFeel').addEventListener('click', () => { $('#pick').hidden = true; if (editing) setEditing(false); $('#sheet').hidden = !$('#sheet').hidden; });
   $('#sheetClose').addEventListener('click', () => { $('#sheet').hidden = true; });
 
   const sliders = [
@@ -847,6 +903,6 @@
   // 디버그/자동 검증용
   window.__cheek = {
     settings, grabs, detectFaces, beginGrab, moveGrab, endGrab, step, render, toImg,
-    get state() { return { n, cols, rows, A, dx, dy, vx, vy, free, regions, imgRect, running, detecting, coachStep }; },
+    get state() { return { n, cols, rows, A, dx, dy, vx, vy, free, regions, imgRect, running, detecting, coachStep, editing, selected }; },
   };
 })();

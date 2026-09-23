@@ -20,10 +20,6 @@
 <main id="stage" class="stage">
   <canvas id="gl"></canvas>
   <div id="regions" class="regions"></div>
-  <div id="editBar" class="edit-bar" hidden>
-    <span>원을 볼 위로 옮기고, 모서리 점을 끌어 크기를 맞추세요</span>
-    <button id="editDone" class="btn primary">완료</button>
-  </div>
   <div id="finger" class="finger" hidden></div>
   <div id="busy" class="busy" hidden><i class="spin"></i><span>볼 찾는 중…</span></div>
   <div id="coach" class="coach" hidden>
@@ -41,6 +37,31 @@
   <input id="file" type="file" accept="image/*" class="offscreen">
   <input id="fileCam" type="file" accept="image/*" capture="user" class="offscreen">
 </nav>
+
+<section id="editPanel" class="sheet edit-panel" hidden>
+  <div class="sheet-head">
+    <div id="regionTabs" class="tabs"></div>
+    <button id="editDone" class="btn small primary">완료</button>
+  </div>
+  <div class="edit-grid">
+    <div class="dpad" aria-label="위치 미세 조절">
+      <button class="dbtn" data-dx="0" data-dy="-1" aria-label="위로">↑</button>
+      <button class="dbtn" data-dx="-1" data-dy="0" aria-label="왼쪽으로">←</button>
+      <button class="dbtn" data-dx="1" data-dy="0" aria-label="오른쪽으로">→</button>
+      <button class="dbtn" data-dx="0" data-dy="1" aria-label="아래로">↓</button>
+    </div>
+    <div class="size-box">
+      <label>크기 <output id="oSize"></output>
+        <input id="sSize" type="range" min="0.03" max="0.45" step="0.005">
+      </label>
+      <div class="size-btns">
+        <button id="sizeDown" class="btn small">작게</button>
+        <button id="sizeUp" class="btn small">크게</button>
+      </div>
+    </div>
+  </div>
+  <p class="note">원을 손가락으로 끌어도 됩니다. 화살표를 길게 누르면 계속 움직입니다.</p>
+</section>
 
 <section id="pick" class="sheet pick" hidden>
   <div class="sheet-head">
