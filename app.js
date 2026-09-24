@@ -237,8 +237,8 @@
   let regions = [];
   function defaultRegions() {
     return [
-      { cx: 0.33, cy: 0.55 * A, r: 0.12, face: -1, W: Infinity },
-      { cx: 0.67, cy: 0.55 * A, r: 0.12, face: -1, W: Infinity },
+      { cx: 0.33, cy: 0.55 * A, r: 0.14, face: -1, W: Infinity },
+      { cx: 0.67, cy: 0.55 * A, r: 0.14, face: -1, W: Infinity },
     ];
   }
 
@@ -669,9 +669,9 @@
   // 볼 위치는 detectFaces로 미리 계산해 두었다. 덕분에 첫 화면에서 인식 모델(약 7MB 전송)을 내려받지 않는다.
   // 사진을 바꾸면 이 좌표도 다시 계산할 것 (브라우저 콘솔에서 __cheek.detectFaces).
   const SAMPLES = [
-    { src: 'samples/baby1.jpg', regions: [{ cx: 0.3516, cy: 0.7302, r: 0.117 }, { cx: 0.6851, cy: 0.6989, r: 0.117 }] },
-    { src: 'samples/baby2.jpg', regions: [{ cx: 0.3380, cy: 0.7270, r: 0.117 }, { cx: 0.6640, cy: 0.7574, r: 0.117 }] },
-    { src: 'samples/baby3.jpg', regions: [{ cx: 0.3451, cy: 0.6601, r: 0.117 }, { cx: 0.6823, cy: 0.6098, r: 0.117 }] },
+    { src: 'samples/baby1.jpg', regions: [{ cx: 0.3516, cy: 0.7302, r: 0.136 }, { cx: 0.6851, cy: 0.6989, r: 0.136 }] },
+    { src: 'samples/baby2.jpg', regions: [{ cx: 0.3380, cy: 0.7270, r: 0.136 }, { cx: 0.6640, cy: 0.7574, r: 0.136 }] },
+    { src: 'samples/baby3.jpg', regions: [{ cx: 0.3451, cy: 0.6601, r: 0.136 }, { cx: 0.6823, cy: 0.6098, r: 0.136 }] },
   ];
   async function loadSample(i) {
     const smp = SAMPLES[i];
@@ -733,7 +733,7 @@
   // 얼굴 윤곽(턱선~이마)을 도는 랜드마크. 앞사람 얼굴을 픽셀 단위로 보호할 때 쓴다.
   const FACE_OVAL = [10, 338, 297, 332, 284, 251, 389, 356, 454, 323, 361, 288, 397, 365, 379, 378, 400, 377, 152, 148, 176, 149, 150, 136, 172, 58, 132, 93, 234, 127, 162, 21, 54, 103, 67, 109];
   const OVAL_GROW = 1.04;         // 윤곽을 살짝 키워 경계 픽셀까지 덮는다
-  const CHEEK_R_RATIO = 0.22;     // 볼 원 반지름 = 얼굴 폭 × 이 값 (사용자가 원하는 크기로 조정한 값)
+  const CHEEK_R_RATIO = 0.257;    // 볼 원 반지름 = 얼굴 폭 × 이 값. 사용자 요청으로 '크게'(×1.08) 두 번씩 두 차례 키움: 0.19 → 0.22 → 0.257
   const MIN_FACE = 0.08;          // 사진 가로 대비 이보다 작은 얼굴은 놀기에 너무 작아 무시
   const TILE_IF_FACE_UNDER = 0.35; // 가장 큰 얼굴이 이보다 작으면 조각 재탐색(인식기가 근거리용이라 작은 얼굴을 놓침)
   const DETECT_PX = 1024;          // 인식 입력 긴 변(검출기 내부 입력이 작아 손실 없음, 업로드 4배 감소)
