@@ -27,8 +27,8 @@
   const NUDGE_AFTER = 12; // 이만큼 당기고 놓으면 한 번 의견을 부탁한다
   const DEV = new URLSearchParams(location.search).has('dev');
 
-  const DEFAULTS = { freq: 4, wobble: 0.75, stretch: 0.6, grab: 1.0, mask: true, show: false, haptic: true };
-  const RANGES = { freq: [2, 8], wobble: [0, 1], stretch: [0.3, 1], grab: [0.6, 1.4] };
+  const DEFAULTS = { freq: 4, wobble: 0.75, stretch: 1.0, grab: 1.0, mask: true, show: false, haptic: true };
+  const RANGES = { freq: [2, 8], wobble: [0, 1], stretch: [0.4, 1.4], grab: [0.6, 1.4] };
   const PRESETS = { soft: { freq: 3, wobble: 0.9 }, chewy: { freq: 4, wobble: 0.75 }, bouncy: { freq: 6, wobble: 0.4 } };
   const settings = loadSettings();
 
@@ -43,6 +43,7 @@
   // 저장된 값은 믿지 않는다: 범위 밖·타입 오류는 기본값으로
   function loadSettings() {
     const raw = loadJSON('cheek.settings');
+    if (raw.v !== 2) delete raw.stretch; // 늘어남 기준이 바뀌었다(v2): 예전 값은 버린다
     const s = { ...DEFAULTS };
     for (const k of Object.keys(RANGES)) {
       const v = raw[k];
@@ -52,7 +53,7 @@
     if (!DEV) s.mask = true; // 배경까지 늘어나는 모드는 개발용
     return s;
   }
-  function saveSettings() { saveJSON('cheek.settings', settings); }
+  function saveSettings() { saveJSON('cheek.settings', { ...settings, v: 2 }); }
 
   // ---------- WebGL ----------
   const gl = canvas.getContext('webgl', { antialias: true, alpha: false, preserveDrawingBuffer: false });
@@ -242,7 +243,8 @@
   }
 
   // 영역 반지름 대비 비율. 원 안쪽은 100% 움직이고, 원 밖 주변 피부는 점점 줄어 MASK_OUTER에서 완전히 고정된다.
-  const MASK_INNER = 0.7, MASK_OUTER = 1.5;
+  // 원 안쪽은 100% 움직이고, 바깥 피부는 점점 줄어 MASK_OUTER에서 고정. 2.0이면 주변 피부가 함께 늘어나 볼이 더 크게 부푼다.
+  const MASK_INNER = 0.7, MASK_OUTER = 2.0;
   const GRAB_HIT = 1.1;  // 원의 이 배율 안을 눌러야 잡힌다
   const MIN_HIT_PX = 28; // 단, 화면에서 손가락 크기만큼은 항상 잡힌다
   const GRAB_BASE = 1.3; // 잡는 범위(반지름) = 원 반지름 × 이 값 × 설정값
@@ -365,7 +367,7 @@
     for (let j = 0; j < rows; j++) for (let i = 0, k = j * stride; i < cols; i++, k++) {
       gX[k] = (w[k + 1] - w[k]) * cols; gY[k] = (w[k + stride] - w[k]) * rows / A;
     }
-    grabs.set(id, { sx: fx, sy: fy, Dx: 0, Dy: 0, Rg, limit: Rg * settings.stretch, w, gX, gY, face: reg ? reg.face : -1, reg });
+    grabs.set(id, { sx: fx, sy: fy, Dx: 0, Dy: 0, Rg, limit: Rg * 1.2 * settings.stretch, w, gX, gY, face: reg ? reg.face : -1, reg });
     if (reg && reg.face >= 0) movingFaces.set(reg.face, reg);
     updateTargets();
     updateProtectMask();
@@ -386,7 +388,8 @@
       let m = 0;
       const gX = g.gX, gY = g.gY;
       for (let k = 0; k < n; k++) { const c = -(ux * gX[k] + uy * gY[k]); if (c > m) m = c; }
-      g.limit = Math.min(g.Rg * settings.stretch, m > 0 ? 0.9 / m : Infinity);
+      // 안전 한계도 슬라이더에 비례시킨다(안 그러면 슬라이더를 올려도 효과가 없음). 1.6은 가벼운 압축까지 허용 — 픽셀 워프라 찢어지지 않고 매끈한 띠로 보인다.
+      g.limit = settings.stretch * Math.min(g.Rg * 1.2, m > 0 ? FOLD_K / m : Infinity);
       const s = (g.limit * Math.tanh(len / g.limit)) / len;
       g.Dx = mx * s; g.Dy = my * s;
     }
@@ -430,6 +433,7 @@
   }
 
   // ---------- 물리 ----------
+  const FOLD_K = 1.6; // 기본(stretch 1)에서 볼이 예전의 약 2배 늘어난다. 사용자 요청으로 0.9에서 올림
   const DT = 1 / 180;
   const K_HOLD = 1600, ZETA_HOLD = 0.7; // 잡고 있을 때: 손가락을 빠르게 따라오되 살짝 끌려오는 느낌
 
@@ -956,10 +960,21 @@
   function stagePt(e) { const r = stage.getBoundingClientRect(); return { x: e.clientX - r.left, y: e.clientY - r.top }; }
   let missCount = 0; // 사진마다 "빗나갔어요" 안내 횟수
 
+  // 볼 위에 닿은 손가락은 항상 "잡기"가 우선이다. 양볼을 잡다가 한 손가락이 살짝 빗나가 "이동"이 되면
+  // 두 번째 손가락과 합쳐 확대·축소로 처리되던 오작동(사용자 제보)을 막는다:
+  //  - 먼저 닿은 이동 손가락이 거의 안 움직였으면(빗나간 잡기) 그 자리에서 다시 잡기를 시도하고, 이동은 멈춘다.
+  //  - 볼을 잡고 있는 동안에는 새 손가락이 빈 곳에 닿아도 이동·확대를 시작하지 않는다.
   canvas.addEventListener('pointerdown', (e) => {
     const p = toImg(e.clientX, e.clientY);
-    if (!editing && !detecting && nav.size === 0 && beginGrab(e.pointerId, p.x, p.y)) {
+    if (!editing && !detecting && beginGrab(e.pointerId, p.x, p.y)) {
       stopDemo(); // 직접 잡았을 때만 시범을 멈춘다(빗나간 탭이면 계속 보여준다)
+      for (const [id, v] of [...nav]) {
+        nav.delete(id);
+        if (Math.hypot(v.x - v.sx, v.y - v.sy) < 16) {
+          const q = toImg(stage.getBoundingClientRect().left + v.x, stage.getBoundingClientRect().top + v.y);
+          beginGrab(id, q.x, q.y); // 빗나간 손가락도 가까운 볼이 있으면 잡는다(없으면 그냥 무시)
+        }
+      }
       buzz(12);
     } else if (userGrabCount() === 0) {
       const s = stagePt(e);
@@ -1546,7 +1561,7 @@
   const sliders = [
     ['#sFreq', '#oFreq', 'freq', (v) => v <= 3 ? '느긋' : v <= 5 ? '보통' : '통통'],
     ['#sWobble', '#oWobble', 'wobble', (v) => v <= 0.4 ? '살짝' : v <= 0.8 ? '보통' : '흐물'],
-    ['#sStretch', '#oStretch', 'stretch', (v) => v <= 0.45 ? '조금' : v <= 0.75 ? '보통' : '쭉'],
+    ['#sStretch', '#oStretch', 'stretch', (v) => v <= 0.75 ? '조금' : v <= 1.15 ? '보통' : '쭉'],
     ['#sGrab', '#oGrab', 'grab', (v) => v <= 0.85 ? '좁게' : v <= 1.15 ? '보통' : '넓게'],
   ];
   const checks = [['#cMask', 'mask'], ['#cShow', 'show'], ['#cHaptic', 'haptic']];
