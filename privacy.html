@@ -53,7 +53,7 @@
     <h2>의견 보내기</h2>
     <ul>
       <li>의견은 Google Forms로 받아요. 이메일을 수집하지 않고, 사진은 포함되지 않아요.</li>
-      <li>폼을 열 때 당긴 횟수·찾은 얼굴 수·브라우저 종류 같은 숫자만 미리 채워질 수 있어요.</li>
+      <li>폼을 열 때 당긴 횟수·찾은 얼굴 수·기기 종류(안드로이드/아이폰/카톡)·느낌 프리셋 이름이 미리 채워질 수 있어요. 사진이나 이름은 없어요.</li>
     </ul>
   </section>
 
@@ -65,7 +65,7 @@
   <section>
     <h2>오픈소스와 자료</h2>
     <ul>
-      <li><b>MediaPipe Tasks Vision</b> 1.0.1 (Google) — <a href="vendor/mediapipe/LICENSE" target="_blank" rel="noopener">Apache License 2.0</a>. 얼굴 랜드마크 모델 <code>face_landmarker.task</code> 포함.</li>
+      <li><b>MediaPipe Tasks Vision</b> 1.0.1 (Google) — <a href="vendor/mediapipe/LICENSE.txt" target="_blank" rel="noopener">Apache License 2.0</a>. 얼굴 랜드마크 모델 <code>face_landmarker.task</code> 포함.</li>
       <li><b>Jua</b> 서체 (우아한형제들) — <a href="fonts/OFL.txt" target="_blank" rel="noopener">SIL Open Font License 1.1</a>. 한글 서브셋으로 포함.</li>
       <li><b>샘플 아기 사진 3장</b> — AI로 생성한 가상의 인물이에요. 실존 인물이 아니에요. <a href="samples/README.md" target="_blank" rel="noopener">출처</a></li>
       <li>앱 소스: <a href="https://github.com/jinavav15000-star/cheek-play" target="_blank" rel="noopener">github.com/jinavav15000-star/cheek-play</a></li>
@@ -74,10 +74,10 @@
 
   <section>
     <h2>문의</h2>
-    <p>앱 안의 "의견 보내기"로 알려주세요. 이 문서는 정식 출시 전에 다시 정리할 예정이에요.</p>
+    <p>앱 안의 "의견 보내기"(준비되면 상단에 보여요)나 <a href="https://github.com/jinavav15000-star/cheek-play/issues" target="_blank" rel="noopener">GitHub 이슈</a>로 알려주세요. 이 문서는 정식 출시 전에 다시 정리할 예정이에요.</p>
   </section>
 
-  <a class="back" href="./">← 볼 꼬집기로 돌아가기</a>
+  <a class="back" href="./" onclick="if (history.length > 1) { history.back(); return false; }">← 볼 꼬집기로 돌아가기</a>
 </main>
 </body>
 </html>

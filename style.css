@@ -82,6 +82,7 @@ a { color: var(--pink-ink); }
   box-shadow: 0 2px 0 var(--line);
 }
 .chip:active { transform: translateY(2px); box-shadow: none; }
+.chip:disabled { opacity: .5; box-shadow: none; transform: none; }
 .chip[hidden] { display: none; }
 
 /* ---------- 무대 ---------- */
@@ -125,7 +126,7 @@ a { color: var(--pink-ink); }
 
 .toast {
   position: absolute; left: 50%; bottom: 14px; transform: translateX(-50%);
-  max-width: calc(100% - 24px);
+  width: max-content; max-width: calc(100% - 24px);
   padding: 10px 16px; border-radius: 16px; font-size: 13.5px; line-height: 1.4; text-align: center;
   background: rgba(90, 70, 80, .92); color: #fff; pointer-events: none;
   animation: rise .25s ease-out;
@@ -135,8 +136,9 @@ a { color: var(--pink-ink); }
   position: absolute; left: 50%; top: 14px; transform: translateX(-50%);
   max-width: calc(100% - 24px);
   display: flex; align-items: center; gap: 8px;
-  padding: 8px 12px 8px 14px; border-radius: 999px; font-size: 13px;
-  background: var(--surface); color: var(--pink-ink); white-space: nowrap;
+  padding: 8px 12px 8px 14px; border-radius: 20px; font-size: 13px;
+  background: var(--surface); color: var(--pink-ink);
+  flex-wrap: wrap; justify-content: center; text-align: center; width: max-content;
   box-shadow: var(--shadow-soft); pointer-events: none;
 }
 .busy .chip { pointer-events: auto; min-height: 32px; padding: 0 10px; font-size: 13px; }
@@ -147,6 +149,10 @@ a { color: var(--pink-ink); }
 }
 
 .reset-view { position: absolute; right: 12px; top: 12px; }
+.coach:not([hidden]) ~ .share-chip { display: none; }
+.coach:not([hidden]) ~ .toast { top: 14px; bottom: auto; }
+.editing-mode .coach { top: 12px; bottom: auto; }
+.editing-mode .coach:not([hidden]) ~ .toast { top: auto; bottom: 14px; }
 .share-chip { position: absolute; right: 12px; bottom: 14px; background: var(--pink); border-color: transparent; box-shadow: 0 3px 0 var(--pink-deep); animation: pop .35s cubic-bezier(.34, 1.56, .64, 1) both; }
 
 /* 시범 손가락 */
@@ -292,27 +298,36 @@ details.more > *:not(summary) { margin-top: 12px; }
 
 /* ---------- 가로 모드·태블릿 ---------- */
 @media (orientation: landscape) and (max-height: 560px) {
-  body { flex-direction: row; flex-wrap: wrap; }
-  .top { width: 100%; padding: 6px 12px 4px; }
-  .stage { flex: 1; margin: 0 8px 8px 12px; }
-  .bottom { flex-direction: column; width: 150px; padding: 0 12px 8px 0; gap: 8px; order: 2; }
-  .bottom .btn { min-height: 44px; }
-  .sheet { order: 3; width: 100%; max-height: 40vh; max-height: 40dvh; }
+  body { display: grid; grid-template-columns: minmax(0, 1fr) 150px; grid-template-rows: auto minmax(0, 1fr) auto; column-gap: 8px; }
+  .top { grid-column: 1 / -1; padding: 6px 12px 4px; }
+  .stage { grid-column: 1; grid-row: 2; margin: 0 0 8px 12px; }
+  .bottom { grid-column: 2; grid-row: 2; flex-direction: column; padding: 0 12px 8px 0; gap: 8px; }
+  .bottom .btn { flex: none; min-height: 44px; }
+  .sheet { grid-column: 1 / -1; grid-row: 3; max-height: 40vh; max-height: 40dvh; }
 }
-@media (min-width: 700px) {
+/* 태블릿·PC(세로 flex라 가로 margin auto만 두면 폭이 0이 된다 → width를 같이 준다) */
+@media (min-width: 700px) and (min-height: 561px) {
   .top, .bottom { max-width: 640px; margin-left: auto; margin-right: auto; width: 100%; }
-  .stage, .sheet { max-width: 616px; margin-left: auto; margin-right: auto; }
+  .stage, .sheet { width: calc(100% - 24px); max-width: 616px; margin-left: auto; margin-right: auto; }
 }
 
 /* ---------- 움직임 ---------- */
 @keyframes wobble {
-  0% { transform: scale(.9) rotate(-3deg); opacity: 0; }
-  100% { transform: scale(1) rotate(0); opacity: 1; }
+  0% { transform: scale(.9) rotate(-3deg); }
+  100% { transform: scale(1) rotate(0); }
 }
 @keyframes pop { from { opacity: 0; transform: translateY(10px) scale(.96); } }
 @keyframes rise { from { opacity: 0; transform: translate(-50%, 6px); } }
 @keyframes spin { to { transform: rotate(360deg); } }
 @media (prefers-reduced-motion: reduce) {
-  .top h1, .coach, .toast, .share-chip { animation: none; }
+  .top h1, .fonts-ready .top h1, .coach, .toast, .share-chip { animation: none; }
   .btn, .chip, .dbtn, .finger { transition: none; }
 }
+
+/* 카톡·앱 안 브라우저용 저장 안내: 사진을 띄우고 길게 눌러 저장 */
+.save-overlay {
+  position: fixed; inset: 0; z-index: 50; background: rgba(90, 70, 80, .92);
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px; padding: 20px;
+}
+.save-overlay img { max-width: 100%; max-height: 70vh; border-radius: 16px; -webkit-touch-callout: default; user-select: auto; -webkit-user-select: auto; }
+.save-overlay p { margin: 0; color: #fff; font-family: var(--display); font-size: 17px; }

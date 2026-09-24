@@ -260,6 +260,7 @@
   // 앞/뒤는 "윤곽 상자가 겹치고, 폭이 1.5배 이상 큰 쪽이 앞"일 때만 판정한다. 어른+아기처럼 비율이 애매하면
   // 판정하지 않는다(틀린 보호는 얼굴 안에 고정 조각을 만들어 더 눈에 띈다).
   let faceOvals = [];
+  const movingFaces = new Map(); // 잡혔거나 놓았지만 아직 출렁이는 얼굴 id → 마지막으로 잡은 볼. settle()에서 비운다.
   const FRONT_RATIO = 1.5;
   const ovalById = (id) => faceOvals.find((o) => o.id === id);
   function boxesOverlap(a, b) { return a.x0 < b.x1 && b.x0 < a.x1 && a.y0 < b.y1 && b.y0 < a.y1; }
@@ -319,6 +320,7 @@
 
   function beginGrab(id, x, y) {
     if (grabs.size >= MAX_GRABS || grabs.has(id)) return false;
+    const fx = x, fy = y; // 손가락 실제 위치 = 당김 기준점. 아래 x, y는 가중치 중심(작은 볼이면 중심 쪽으로 당김)
     let reg = null, regIdx = -1, Rg;
     if (settings.mask) {
       const hitR = (r) => Math.max(r.r * GRAB_HIT, MIN_HIT_PX / imgRect.w);
@@ -357,14 +359,14 @@
       w[k] = g; wsum += g;
     }
     if (wsum < 0.05) return false; // 움직일 수 있는 점이 없다(전부 보호 안) → 잡지 않은 것으로
-    // 접힘 방지: 변위 d = w·D 의 기울기 G·D 가 1을 넘으면 사진이 접힌다 → D 한계를 1/G 이하로
-    let G = 0;
+    // 접힘 방지용 가중치 기울기(부호 있음). 변위 d = w·D·u 의 야코비안 행렬식은 1 + D·(u·∇w) 이므로
+    // 당기는 방향 u에 대해 D < 1 / max(−u·∇w) 이어야 접히지 않는다. 한계는 moveGrab에서 방향마다 계산한다.
+    const gX = new Float32Array(n), gY = new Float32Array(n);
     for (let j = 0; j < rows; j++) for (let i = 0, k = j * stride; i < cols; i++, k++) {
-      const gx = Math.abs(w[k + 1] - w[k]) * cols, gy = Math.abs(w[k + stride] - w[k]) * rows / A;
-      if (gx > G) G = gx; if (gy > G) G = gy;
+      gX[k] = (w[k + 1] - w[k]) * cols; gY[k] = (w[k + stride] - w[k]) * rows / A;
     }
-    const limit = Math.min(Rg * settings.stretch, G > 0 ? 1.0 / G : Infinity);
-    grabs.set(id, { sx: x, sy: y, Dx: 0, Dy: 0, limit, w, face: reg ? reg.face : -1, reg });
+    grabs.set(id, { sx: fx, sy: fy, Dx: 0, Dy: 0, Rg, limit: Rg * settings.stretch, w, gX, gY, face: reg ? reg.face : -1, reg });
+    if (reg && reg.face >= 0) movingFaces.set(reg.face, reg);
     updateTargets();
     updateProtectMask();
     wake();
@@ -379,6 +381,12 @@
     const len = Math.hypot(mx, my);
     if (len < 1e-6) { g.Dx = g.Dy = 0; }
     else {
+      // 이 방향으로 눌리는 쪽의 최대 압축률 m → 접힘 한계 0.9/m (여유 10%). 슬라이더 한계와 작은 쪽.
+      const ux = mx / len, uy = my / len;
+      let m = 0;
+      const gX = g.gX, gY = g.gY;
+      for (let k = 0; k < n; k++) { const c = -(ux * gX[k] + uy * gY[k]); if (c > m) m = c; }
+      g.limit = Math.min(g.Rg * settings.stretch, m > 0 ? 0.9 / m : Infinity);
       const s = (g.limit * Math.tanh(len / g.limit)) / len;
       g.Dx = mx * s; g.Dy = my * s;
     }
@@ -389,13 +397,14 @@
   function endGrab(id) {
     if (!grabs.delete(id)) return false;
     updateTargets();
+    updateProtectMask();
     wake();
     return true;
   }
 
   function clearGrabs() {
     grabs.clear();
-    if (n) updateTargets();
+    if (n) { updateTargets(); updateProtectMask(); }
   }
 
   // 모든 손가락의 당김을 합쳐 정점별 목표 변위(tgtX, tgtY)와 "잡혀 있는 정도"(held)를 만든다.
@@ -461,6 +470,7 @@
     if (!n) return;
     dx.fill(0); dy.fill(0); vx.fill(0); vy.fill(0);
     maskActive = false; maskKey = '';
+    movingFaces.clear();
   }
 
   // ---------- 루프 ----------
@@ -474,7 +484,11 @@
     acc += Math.min(0.05, (t - lastT) / 1000); lastT = t;
     let energy = 1;
     while (acc >= DT) { energy = step(); acc -= DT; }
-    if (grabs.size === 0 && energy < 2e-5) { settle(); running = false; }
+    if (grabs.size === 0 && energy < 2e-5) {
+      settle(); running = false;
+      if (capSnap) { const snap = capSnap; capSnap = null; captureFrame(snap); } // 놓는 순간의 장면은 멈춘 뒤에 찍는다(첫 출렁임을 안 끊게)
+      applyPendingFaces();
+    }
     render();
     if (running) requestAnimationFrame(frame);
   }
@@ -515,11 +529,11 @@
     render();
   }
 
-  function uploadDisp() {
+  function uploadDisp(ax = dx, ay = dy) {
     // 변위장을 16비트 정수×2로 인코딩해 텍스처에 올린다. 0은 정확히 32768 → 셰이더에서 정확히 0.
     for (let k = 0, o = 0; k < n; k++, o += 4) {
-      const ex = 32768 + Math.round(Math.max(-32767, Math.min(32767, dx[k] * 32767)));
-      const ey = 32768 + Math.round(Math.max(-32767, Math.min(32767, dy[k] * 32767)));
+      const ex = 32768 + Math.round(Math.max(-32767, Math.min(32767, ax[k] * 32767)));
+      const ey = 32768 + Math.round(Math.max(-32767, Math.min(32767, ay[k] * 32767)));
       dispBytes[o] = ex >> 8; dispBytes[o + 1] = ex & 255;
       dispBytes[o + 2] = ey >> 8; dispBytes[o + 3] = ey & 255;
     }
@@ -528,9 +542,9 @@
     gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, cols + 1, rows + 1, gl.RGBA, gl.UNSIGNED_BYTE, dispBytes);
     gl.activeTexture(gl.TEXTURE0);
   }
-  function drawQuad() {
+  function drawQuad(useMask = maskActive) {
     gl.clear(gl.COLOR_BUFFER_BIT);
-    gl.uniform1f(locUseMask, maskActive ? 1 : 0);
+    gl.uniform1f(locUseMask, useMask ? 1 : 0);
     gl.bindBuffer(gl.ARRAY_BUFFER, posBuf);
     gl.vertexAttribPointer(locPos, 2, gl.FLOAT, false, 0, 0);
     gl.bindBuffer(gl.ARRAY_BUFFER, uvBuf);
@@ -549,11 +563,13 @@
   let maskActive = false, maskKey = '';
   const MASK_PX = 768;
   function updateProtectMask() {
-    const grabbed = [];
-    for (const g of grabs.values()) { const f = g.face >= 0 ? ovalById(g.face) : null; if (f) grabbed.push({ f, reg: g.reg }); }
-    const front = grabbed.length ? faceOvals.filter((o) => o.poly && grabbed.some(({ f, reg }) => inFrontOf(o, f, reg))) : [];
+    // 움직이는 얼굴(잡힘 + 놓았지만 출렁이는 중)보다 앞에 있는 얼굴만 보호한다. 움직이는 얼굴 자신은 보호 대상에서 뺀다
+    // (두 얼굴을 같이 잡았을 때 앞 얼굴의 당긴 볼이 원본으로 되돌아가던 회귀 방지).
+    const moving = [];
+    for (const [id, reg] of movingFaces) { const f = ovalById(id); if (f) moving.push({ f, reg }); }
+    const front = moving.length ? faceOvals.filter((o) => o.poly && !movingFaces.has(o.id) && moving.some(({ f, reg }) => inFrontOf(o, f, reg))) : [];
     const key = front.map((o) => o.id).join(',');
-    if (!front.length) { if (!grabs.size) return; maskActive = false; maskKey = ''; return; } // 놓은 뒤엔 멈출 때까지 유지
+    if (!front.length) { maskActive = false; maskKey = ''; return; }
     if (key === maskKey && maskActive) return;
     maskKey = key;
     const c = document.createElement('canvas');
@@ -599,7 +615,8 @@
     regions = newRegions || defaultRegions();
     faceOvals = []; // 자동 인식이 끝나면 다시 채운다
     grabs.clear(); nav.clear();
-    missCount = 0; shareBlob = null; $('#shareChip').hidden = true;
+    missCount = 0; shareBlob = null; capSnap = null; pendingFaces = null; clearTimeout(shareTimer); $('#shareChip').hidden = true;
+    movingFaces.clear();
     view.z = 1; view.cx = 0.5; view.cy = A / 2;
     uploadTexture();
     buildMesh();
@@ -698,6 +715,7 @@
     if (c && (c.saveData || (c.effectiveType && c.effectiveType !== '4g'))) return;
     const go = () => getLandmarker().then((lm) => {
       if (detecting) return;
+      if (demo || grabs.size || running) { setTimeout(go, 1500); return; } // 시범·당기기·출렁임을 끊지 않게 미룬다
       const w = document.createElement('canvas'); w.width = w.height = 32;
       w.getContext('2d').fillRect(0, 0, 32, 32);
       try { lm.detect(w); } catch { /* 워밍업 실패는 무시 */ }
@@ -843,6 +861,7 @@
     $('#busy').hidden = !on;
     $('#busyManual').hidden = true;
     for (const id of ['#btnEdit', '#btnHelp', '#regionRefind']) $(id).disabled = on;
+    $('#editPanel').inert = on; // 인식 중 옮긴 원이 결과로 조용히 덮이지 않게
     if (!on) { hintEl.textContent = editing ? '볼 위치를 맞추는 중' : '볼을 누른 채 끌었다가 놓아보세요'; return; }
     $('#busyText').textContent = '볼 찾는 중…';
     hintEl.textContent = '볼 찾는 중…';
@@ -855,8 +874,18 @@
     toast('분홍 원을 볼 위로 옮겨주세요', 3000);
   });
 
+  let pendingFaces = null; // 뒤에서 찾은 얼굴. 잡는 중·출렁이는 중·편집 중이면 멈춘 뒤에 붙인다
+  function applyPendingFaces() {
+    if (!pendingFaces || grabs.size || running || editing) return;
+    const { token, faces } = pendingFaces; pendingFaces = null;
+    if (token !== detectToken) return;
+    const add = faces.slice(0, Math.max(0, MAX_FACES - faceOvals.length));
+    if (!add.length) return;
+    applyFaces(add, false);
+    toast(`얼굴 ${add.length}개를 더 찾았어요`);
+  }
   async function autoPlaceCheeks() {
-    const token = detectToken;
+    const token = ++detectToken; // 진행 중이던 조각 탐색(다시 찾기 포함)은 이 세대로 끊는다
     setDetecting(true);
     await nextFrame(); // 스피너와 새 사진이 먼저 그려지게(인식은 동기라 화면을 잠깐 붙잡는다)
     if (token !== detectToken) return;
@@ -870,12 +899,12 @@
       toast(faces.length > 1 ? `얼굴 ${faces.length}개를 찾았어요! 볼을 잡고 당겨보세요` : '볼을 찾았어요! 잡고 당겨보세요');
       if (coachStep === 1) startDemo();
       if (faces[0].W < TILE_IF_FACE_UNDER) {
-        setTimeout(() => toast('두 손가락으로 벌리면 확대, 빈 곳을 끌면 이동돼요', 3200), 2200);
+        setTimeout(() => { if (token === detectToken) toast('두 손가락으로 벌리면 확대, 빈 곳을 끌면 이동돼요', 3200); }, 2200);
         // 작은 얼굴이 더 있을 수 있다: 놀이는 시작하고 뒤에서 조각 재탐색
         detectTiles(srcCanvas, A, faces, token).then((more) => {
           if (token !== detectToken || !more.length) return;
-          applyFaces(more.slice(0, MAX_FACES - faces.length), false);
-          toast(`얼굴 ${more.length}개를 더 찾았어요`);
+          pendingFaces = { token, faces: more };
+          applyPendingFaces();
         }).catch(() => { /* 추가 탐색 실패는 조용히 */ });
       }
       return;
@@ -895,9 +924,9 @@
     setDetecting(false);
     setEditing(true);
     if (faces) {
-      showCoach('얼굴을 못 찾았어요. 분홍 원을 볼 위로 끌고, 점을 끌어 크기를 맞춘 뒤 [완료]를 눌러주세요. 강아지·고양이·아기 배도 돼요.', [
-        { label: '다시 찾기', primary: true, onClick: () => { hideCoach(); autoPlaceCheeks(); } },
-        { label: '직접 맞출게요', onClick: hideCoach },
+      showCoach('얼굴을 못 찾았어요. 분홍 원을 볼 위로 끌어 맞춘 뒤 [완료]를 눌러주세요. 강아지·고양이·아기 배도 돼요.', [
+        { label: '직접 맞출게요', primary: true, onClick: hideCoach },
+        { label: '다른 사진 고르기', onClick: () => { hideCoach(); openSheet('pick'); } },
       ], true);
     } else if (!SIMD_OK || landmarkerBroken) {
       showCoach('이 기기에서는 자동 인식이 안 돼요. 분홍 원을 볼 위로 직접 옮겨주세요.', [{ label: '알겠어요', onClick: hideCoach }], true);
@@ -952,6 +981,8 @@
       view.cx -= (cur.x - cur0.x) / imgRect.w;
       view.cy -= (cur.y - cur0.y) / imgRect.w;
     } else {
+      for (const v of nav.values()) v.multi = true; // 두 손가락이 닿았으면 놓을 때 탭으로 보지 않는다
+      cur.multi = true;
       const [idA, idB] = [...nav.keys()];
       const oa = nav.get(idA), ob = nav.get(idB);
       const na = e.pointerId === idA ? cur : oa, nb = e.pointerId === idB ? cur : ob;
@@ -984,7 +1015,7 @@
     if (nv) {
       nav.delete(e.pointerId);
       const moved = Math.hypot(nv.x - nv.sx, nv.y - nv.sy);
-      if (moved < 8 && e.type === 'pointerup') {
+      if (moved < 8 && !nv.multi && e.type === 'pointerup') {
         const p = toImg(e.clientX, e.clientY);
         if (editing) { // 톡 누르면 선택한 원이 그 자리로
           const reg = regions[selected];
@@ -998,7 +1029,7 @@
     }
     const g = grabs.get(e.pointerId);
     if (!g) return;
-    if (Math.hypot(g.Dx, g.Dy) >= g.limit * 0.5) captureFrame(); // 가장 늘어난 순간을 저장해 둔다(공유용)
+    if (Math.hypot(g.Dx, g.Dy) >= g.limit * 0.5) snapshotForCapture(); // 가장 늘어난 순간을 기억해 둔다(공유용)
     endGrab(e.pointerId);
     buzz(8);
     releases++;
@@ -1022,7 +1053,12 @@
   }
 
   // ---------- 저장·공유 (사용자가 버튼을 눌러 공유 시트에서 고를 때만 사진이 나간다) ----------
-  let cap = null, shareBlob = null, shareTimer = 0, lastCap = 0;
+  let cap = null, shareBlob = null, shareTimer = 0, lastCap = 0, capSnap = null;
+  // 놓는 순간의 변위장을 복사해 두었다가 frame()이 멈출 때 captureFrame(snap)으로 찍는다
+  function snapshotForCapture() {
+    if (!srcCanvas || performance.now() - lastCap < 1500) return;
+    capSnap = { dx: dx.slice(), dy: dy.slice(), mask: maskActive, src: srcCanvas, step: coachStep };
+  }
   function ensureCapture() {
     const w = Math.min(1080, srcCanvas.width), h = Math.round(w * A);
     if (cap && cap.w === w && cap.h === h) return cap;
@@ -1041,8 +1077,8 @@
     cap = ok ? { fbo, tex: t, w, h, pixels: new Uint8Array(w * h * 4) } : null;
     return cap;
   }
-  function captureFrame() {
-    if (!srcCanvas || performance.now() - lastCap < 1500) return;
+  function captureFrame(snap) {
+    if (!srcCanvas || snap.src !== srcCanvas || snap.step) return; // 사진이 바뀌었거나 첫 사용 안내 중이면 찍지 않는다
     lastCap = performance.now();
     let c;
     try { c = ensureCapture(); } catch { c = null; }
@@ -1050,7 +1086,7 @@
     gl.bindFramebuffer(gl.FRAMEBUFFER, c.fbo);
     gl.viewport(0, 0, c.w, c.h);
     gl.uniform2f(locO, -1, 1); gl.uniform2f(locS, 2, 2 / A);
-    uploadDisp(); drawQuad();
+    uploadDisp(snap.dx, snap.dy); drawQuad(snap.mask);
     gl.readPixels(0, 0, c.w, c.h, gl.RGBA, gl.UNSIGNED_BYTE, c.pixels);
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
     gl.viewport(0, 0, canvas.width, canvas.height);
@@ -1061,8 +1097,9 @@
     const rowBytes = c.w * 4;
     for (let y = 0; y < c.h; y++) img.data.set(c.pixels.subarray((c.h - 1 - y) * rowBytes, (c.h - y) * rowBytes), y * rowBytes);
     out.getContext('2d').putImageData(img, 0, 0);
+    const src = srcCanvas;
     out.toBlob((b) => {
-      if (!b) return;
+      if (!b || src !== srcCanvas || coachStep) return;
       shareBlob = b;
       $('#shareChip').hidden = false;
       clearTimeout(shareTimer);
@@ -1078,14 +1115,26 @@
         return;
       }
     } catch (e) { if (e && e.name === 'AbortError') return; }
+    const url = URL.createObjectURL(shareBlob);
+    if (/KAKAOTALK|; wv\)/i.test(navigator.userAgent)) {
+      // 카톡·앱 안 브라우저는 다운로드가 조용히 실패할 수 있다 → 사진을 띄워 길게 눌러 저장하게 한다
+      const ov = document.createElement('div');
+      ov.className = 'save-overlay';
+      ov.innerHTML = `<img alt="저장할 장면"><p>사진을 길게 눌러 저장하세요</p><button class="btn small">닫기</button>`;
+      ov.querySelector('img').src = url;
+      ov.querySelector('button').addEventListener('click', () => { ov.remove(); URL.revokeObjectURL(url); });
+      document.body.appendChild(ov);
+      return;
+    }
     const a = document.createElement('a');
-    a.href = URL.createObjectURL(shareBlob); a.download = file.name;
+    a.href = url; a.download = file.name;
     document.body.appendChild(a); a.click(); a.remove();
-    setTimeout(() => URL.revokeObjectURL(a.href), 2000);
-    toast('사진으로 저장했어요');
+    setTimeout(() => URL.revokeObjectURL(url), 2000);
+    toast('다운로드 폴더에 저장했어요');
   }
   $('#shareChip').addEventListener('click', () => {
     clearTimeout(shareTimer);
+    $('#shareChip').hidden = true;
     if (flag('cheek.shareOk')) { shareCapture(); return; }
     showCoach('이 장면을 사진으로 저장하거나 공유해요. 공유는 내가 고른 앱으로만 가고, 사진 속 사람의 허락은 잊지 마세요.', [
       { label: '네, 계속', primary: true, onClick: () => { setFlag('cheek.shareOk'); hideCoach(); shareCapture(); } },
@@ -1102,8 +1151,8 @@
   }
   function openSheet(id) {
     if (openId === id) return;
+    const had = !!openId; // setEditing이 openId를 비우기 전에 계산해야 history 항목이 새지 않는다
     if (openId === 'editPanel' && id !== 'editPanel') { setEditing(false, true); }
-    const had = !!openId;
     showSheet(id);
     if (!had) { try { history.pushState({ sheet: 1 }, ''); } catch { /* 무시 */ } }
   }
@@ -1121,7 +1170,11 @@
   }
   window.addEventListener('popstate', () => {
     if (pendingBack > 0) { pendingBack--; return; }
-    if (!openId) return;
+    if (!openId) {
+      // 열린 시트가 없는데 시트용 항목에 도착했다 = 어딘가에서 샌 항목. 한 번 더 뒤로 가서 건너뛴다
+      if (history.state && history.state.sheet) { pendingBack++; setTimeout(() => { pendingBack = Math.max(0, pendingBack - 1); }, 600); try { history.back(); } catch { pendingBack = 0; } }
+      return;
+    }
     if (openId === 'editPanel') setEditing(false, true); else showSheet(null);
   });
 
@@ -1153,7 +1206,7 @@
 
       let mode = null, activeId = null, offX = 0, offY = 0;
       el.addEventListener('pointerdown', (e) => {
-        if (!editing || activeId !== null) return;
+        if (!editing || detecting || activeId !== null) return;
         selectRegion(i);
         mode = e.target.classList.contains('handle') ? 'resize' : 'move';
         activeId = e.pointerId;
@@ -1291,8 +1344,10 @@
     }
     regionsEl.classList.toggle('editing', on);
     regionsEl.classList.toggle('ghost', !on && settings.show);
+    stage.classList.toggle('editing-mode', on); // 편집 중 안내 카드는 위쪽에(원을 가리지 않게)
     hintEl.textContent = on ? '볼 위치를 맞추는 중' : '볼을 누른 채 끌었다가 놓아보세요';
     layout(); // 패널이 열리고 닫히면 사진 크기가 바뀐다
+    if (!on) applyPendingFaces();
   }
 
   // ---------- UI ----------
@@ -1532,7 +1587,7 @@
     });
   }
   $('#btnReset').addEventListener('click', () => {
-    Object.assign(settings, DEFAULTS);
+    for (const k of Object.keys(RANGES)) settings[k] = DEFAULTS[k]; // 진동·원 표시 설정은 그대로
     saveSettings();
     syncUI(); settle(); updateFree(); render();
     regionsEl.classList.toggle('ghost', !editing && settings.show);

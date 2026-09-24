@@ -23,7 +23,7 @@
 4. **느낌 조절** → 출렁이는 속도/정도, 늘어나는 한계, 잡히는 범위를 만지면서 바로 시험
 
 ## 의견 보내기 링크
-`app.js` 맨 위 `FEEDBACK_URL`에 구글 폼 주소를 넣는다(비어 있으면 버튼이 숨겨진다). `FEEDBACK_PREFILL`로 숫자만 미리 채울 수 있다.
+`app.js` 맨 위 `FEEDBACK_URL`에 구글 폼 주소를 넣는다(비어 있으면 버튼이 숨겨진다). `FEEDBACK_PREFILL`로 당긴 횟수·얼굴 수·기기 종류·프리셋 이름을 미리 채울 수 있다.
 
 ## 개인정보·라이선스
 `privacy.html`. MediaPipe(Apache-2.0, `vendor/mediapipe/LICENSE`), Jua(OFL, `fonts/OFL.txt`), 샘플 사진 출처 `samples/README.md`.
